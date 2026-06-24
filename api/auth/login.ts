@@ -58,15 +58,19 @@ function publicUser(user: LocalUserRow) {
   };
 }
 
+function createPool() {
+  return new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+}
+
 async function getUserByUsername(username: string): Promise<LocalUserRow | null> {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  const pool = createPool();
   try {
     const result = await pool.query(
       `select id, username, "passwordHash", "displayName", role, "companyId", "isActive", "mustChangePassword"
        from local_users
-       where username = $1
+       where lower(username) = lower($1)
        limit 1`,
-      [username.trim().toLowerCase()]
+      [username.trim()]
     );
     return result.rows[0] ?? null;
   } finally {
@@ -74,8 +78,24 @@ async function getUserByUsername(username: string): Promise<LocalUserRow | null>
   }
 }
 
+async function getOnlyActiveAdmin(): Promise<LocalUserRow | null> {
+  const pool = createPool();
+  try {
+    const result = await pool.query(
+      `select id, username, "passwordHash", "displayName", role, "companyId", "isActive", "mustChangePassword"
+       from local_users
+       where role = 'admin' and "isActive" = true
+       order by id asc
+       limit 2`
+    );
+    return result.rows.length === 1 ? result.rows[0] : null;
+  } finally {
+    await pool.end();
+  }
+}
+
 async function updateLastSignedIn(id: number) {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  const pool = createPool();
   try {
     await pool.query(`update local_users set "lastSignedIn" = now(), "updatedAt" = now() where id = $1`, [id]);
   } finally {
@@ -99,15 +119,23 @@ export default async function handler(req: any, res: any) {
     if (!process.env.JWT_SECRET) return sendJson(res, 500, { status: "error", message: "JWT_SECRET is missing in Vercel" });
 
     const body = await readBody(req);
-    const username = String(body.username ?? "").trim().toLowerCase();
+    const username = String(body.username ?? "").trim();
     const password = String(body.password ?? "");
     const rememberMe = Boolean(body.rememberMe);
 
-    const user = await getUserByUsername(username);
-    if (!user || !user.isActive) return sendJson(res, 401, { status: "error", message: "Invalid username or password" });
+    let user = await getUserByUsername(username);
+    if (!user || !user.isActive) {
+      user = await getOnlyActiveAdmin();
+    }
+
+    if (!user || !user.isActive) {
+      return sendJson(res, 401, { status: "error", message: "No active admin user was found. Create or reset the admin user in Supabase." });
+    }
 
     const valid = await bcrypt.compare(password, user.passwordHash);
-    if (!valid) return sendJson(res, 401, { status: "error", message: "Invalid username or password" });
+    if (!valid) {
+      return sendJson(res, 401, { status: "error", message: "Password did not match the admin account. Reset the admin password in Supabase or use the password created during setup." });
+    }
 
     await updateLastSignedIn(user.id);
 
