@@ -1,0 +1,1 @@
+ALTER TABLE `safety_reports` ADD `lastEmailed` timestamp;

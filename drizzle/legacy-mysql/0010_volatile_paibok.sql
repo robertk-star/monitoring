@@ -1,0 +1,1 @@
+ALTER TABLE `safety_reports` ADD CONSTRAINT `unique_fileNumber_companyId` UNIQUE(`fileNumber`,`companyId`);

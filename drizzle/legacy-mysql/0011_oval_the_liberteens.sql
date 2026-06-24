@@ -1,0 +1,1 @@
+ALTER TABLE `companies` ADD `sheetUrlBackup` varchar(2048) DEFAULT '' NOT NULL;

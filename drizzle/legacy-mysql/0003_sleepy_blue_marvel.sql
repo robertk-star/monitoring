@@ -1,0 +1,2 @@
+ALTER TABLE `safety_reports` MODIFY COLUMN `notes` varchar(1000) NOT NULL DEFAULT '';--> statement-breakpoint
+ALTER TABLE `safety_reports` MODIFY COLUMN `otherAccidents` varchar(1000) NOT NULL DEFAULT '';

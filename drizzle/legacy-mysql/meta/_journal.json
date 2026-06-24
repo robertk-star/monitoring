@@ -1,0 +1,97 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1775238141491,
+      "tag": "0000_sticky_starbolt",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1775238207721,
+      "tag": "0001_typical_hairball",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1775311318818,
+      "tag": "0002_reflective_speed_demon",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1775311397722,
+      "tag": "0003_sleepy_blue_marvel",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1775321224911,
+      "tag": "0004_boring_ender_wiggin",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1775323319498,
+      "tag": "0005_chemical_anthem",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1775397719688,
+      "tag": "0006_gray_kang",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1775398099886,
+      "tag": "0007_wide_nemesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1775476710814,
+      "tag": "0008_lazy_darkhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1775489053167,
+      "tag": "0009_equal_king_cobra",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1778252038436,
+      "tag": "0010_volatile_paibok",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1778264135685,
+      "tag": "0011_oval_the_liberteens",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1778613063457,
+      "tag": "0012_nostalgic_blade",
+      "breakpoints": true
+    }
+  ]
+}
