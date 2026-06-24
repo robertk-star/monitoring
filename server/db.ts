@@ -158,6 +158,7 @@ export async function createLocalUser(data: {
   displayName?: string;
   role?: "user" | "admin" | "viewer";
   companyId?: number | null;
+  mustChangePassword?: boolean;
 }): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -169,7 +170,7 @@ export async function createLocalUser(data: {
     role: data.role ?? "user",
     companyId: data.companyId ?? null,
     isActive: true,
-    mustChangePassword: true,
+    mustChangePassword: data.mustChangePassword ?? true,
   };
   await db.insert(localUsers).values(values);
 }
@@ -221,6 +222,13 @@ export async function countLocalUsers(): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
   const result = await db.select({ id: localUsers.id }).from(localUsers);
+  return result.length;
+}
+
+export async function countAdminUsers(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ id: localUsers.id }).from(localUsers).where(and(eq(localUsers.role, "admin"), eq(localUsers.isActive, true)));
   return result.length;
 }
 
