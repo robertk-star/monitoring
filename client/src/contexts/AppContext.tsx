@@ -25,10 +25,22 @@ export interface Applicant {
 
 /** New DS6 row shape returned by the monitoring sheet */
 interface DS6Row {
+  id?: string | number;
   fileNumber: string;
   name: string;
   orderDate: string;
   monitorStatus: string;
+  mvrStatus?: string;
+  medExpire?: string;
+  medExpireOverridden?: boolean;
+  notes?: string;
+}
+
+interface MonitoringApplicantsResponse {
+  status: string;
+  source?: "supabase" | "google" | "google-fallback";
+  message?: string;
+  data: DS6Row[];
 }
 
 interface MedCertRow {
@@ -58,6 +70,11 @@ function formatDate(raw: unknown): string {
   return str;
 }
 
+function normalizeMonitorStatus(raw: unknown): "On" | "Off" {
+  const monitorRaw = String(raw ?? "").trim();
+  return monitorRaw === "On" || monitorRaw === "Yes" ? "On" : "Off";
+}
+
 function ds6RowToApplicant(
   row: DS6Row,
   index: number,
@@ -66,23 +83,32 @@ function ds6RowToApplicant(
   overrideMap: Map<string, boolean>
 ): Applicant {
   const fileNum = String(row.fileNumber ?? "").trim();
-  const monitorRaw = String(row.monitorStatus ?? "").trim();
-  // Normalise: only an explicit "On" or "Yes" value enables monitoring.
-  // New records with a blank or unrecognised value always default to "Off".
-  const monitorStatus: "On" | "Off" =
-    monitorRaw === "On" || monitorRaw === "Yes" ? "On" : "Off";
 
   return {
-    id: String(index + 1),
+    id: String(row.id ?? index + 1),
     name: String(row.name ?? "").trim().toUpperCase(),
     fileNumber: fileNum,
     orderDate: formatDate(row.orderDate),
-    monitorStatus,
-    mvrStatus: "",
-    medExpire: medMap.get(fileNum) ?? "",
-    medExpireOverridden: overrideMap.get(fileNum) ?? false,
-    notes: notesMap.get(fileNum) ?? "",
+    monitorStatus: normalizeMonitorStatus(row.monitorStatus),
+    mvrStatus: String(row.mvrStatus ?? "").trim(),
+    medExpire: row.medExpire ? formatDate(row.medExpire) : medMap.get(fileNum) ?? "",
+    medExpireOverridden: typeof row.medExpireOverridden === "boolean" ? row.medExpireOverridden : overrideMap.get(fileNum) ?? false,
+    notes: row.notes ?? notesMap.get(fileNum) ?? "",
   };
+}
+
+async function fetchSupabaseApplicants(companyId: number): Promise<MonitoringApplicantsResponse> {
+  const res = await fetch(`/api/monitoring/applicants?companyId=${encodeURIComponent(companyId)}`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(`Supabase monitoring read failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+function showReadOnlyMigrationMessage() {
+  toast.info("Editing is temporarily disabled in this migration build so the old Google Sheets data cannot be overwritten.");
 }
 
 interface AppContextValue {
@@ -149,90 +175,112 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
 
-    // Fetch applicants (DS6), med certs (DS2), notes (DS3), and med expire dates (DS5) in parallel
-    const companyInput = { companyId: selectedCompanyId };
-    Promise.allSettled([
-      utils.data.applicants.fetch(companyInput),
-      utils.data.medCerts.fetch(),
-      utils.data.notes.fetch(companyInput),
-      utils.data.medExpireDates.fetch(companyInput),
-    ])
-      .then(([applicantsResult, medCertsResult, notesResult, medExpireResult]) => {
-        const applicantsJson = applicantsResult.status === "fulfilled" ? applicantsResult.value : { status: "error", data: [] };
-        const medCertsJson = medCertsResult.status === "fulfilled" ? medCertsResult.value : { status: "error", data: [] };
-        const notesJson = notesResult.status === "fulfilled" ? notesResult.value : { status: "error", data: [] };
-        const medExpireJson = medExpireResult.status === "fulfilled" ? medExpireResult.value : { status: "error", data: [] };
-        if (cancelled) return;
+    const loadLegacyGoogleMonitoring = async () => {
+      // Fetch applicants (DS6), med certs (DS2), notes (DS3), and med expire dates (DS5) in parallel
+      const companyInput = { companyId: selectedCompanyId };
+      const [applicantsResult, medCertsResult, notesResult, medExpireResult] = await Promise.allSettled([
+        utils.data.applicants.fetch(companyInput),
+        utils.data.medCerts.fetch(),
+        utils.data.notes.fetch(companyInput),
+        utils.data.medExpireDates.fetch(companyInput),
+      ]);
 
-        if (applicantsJson.status !== "ok" || !Array.isArray(applicantsJson.data)) {
-          throw new Error("Unexpected response from data source");
-        }
+      const applicantsJson = applicantsResult.status === "fulfilled" ? applicantsResult.value : { status: "error", data: [] };
+      const medCertsJson = medCertsResult.status === "fulfilled" ? medCertsResult.value : { status: "error", data: [] };
+      const notesJson = notesResult.status === "fulfilled" ? notesResult.value : { status: "error", data: [] };
+      const medExpireJson = medExpireResult.status === "fulfilled" ? medExpireResult.value : { status: "error", data: [] };
 
-        // Build File # → Med Expiry date map (DS2 base, DS5 overrides)
-        // Also build File # → override flag map (DS5: column C has a value)
-        const medMap = new Map<string, string>();
-        const overrideMap = new Map<string, boolean>();
-        if (medCertsJson.status === "ok" && Array.isArray(medCertsJson.data)) {
-          (medCertsJson.data as MedCertRow[]).forEach((row) => {
-            const key = String(row["File #"]).trim();
-            if (key) medMap.set(key, formatDate(row["Exp Date"]));
-          });
-        }
-        if (medExpireJson?.status === "ok" && Array.isArray(medExpireJson.data)) {
-          medExpireJson.data.forEach((row: { fileNumber: string; medExpire: string; overwrite?: string }) => {
-            const key = String(row.fileNumber).trim();
-            if (key && row.medExpire) medMap.set(key, row.medExpire);
-            // Mark as overridden if column C (overwrite) has a non-empty value
-            if (key && row.overwrite) overrideMap.set(key, true);
-          });
-        }
+      if (applicantsJson.status !== "ok" || !Array.isArray(applicantsJson.data)) {
+        throw new Error("Unexpected response from data source");
+      }
 
-        // Build File # → Notes map (DS3)
-        const notesMap = new Map<string, string>();
-        if (notesJson.status === "ok" && Array.isArray(notesJson.data)) {
-          notesJson.data.forEach((row) => {
-            const key = String(row.fileNumber).trim();
-            if (key && row.notes) notesMap.set(key, row.notes);
-          });
-        }
-
-        // Deduplicate by fileNumber — last occurrence wins
-        const seen = new Map<string, DS6Row>();
-        (applicantsJson.data as DS6Row[]).forEach((row) => {
-          const key = String(row.fileNumber ?? "").trim();
-          if (key) seen.set(key, row);
+      // Build File # → Med Expiry date map (DS2 base, DS5 overrides)
+      // Also build File # → override flag map (DS5: column C has a value)
+      const medMap = new Map<string, string>();
+      const overrideMap = new Map<string, boolean>();
+      if (medCertsJson.status === "ok" && Array.isArray(medCertsJson.data)) {
+        (medCertsJson.data as MedCertRow[]).forEach((row) => {
+          const key = String(row["File #"]).trim();
+          if (key) medMap.set(key, formatDate(row["Exp Date"]));
         });
+      }
+      if (medExpireJson?.status === "ok" && Array.isArray(medExpireJson.data)) {
+        medExpireJson.data.forEach((row: { fileNumber: string; medExpire: string; overwrite?: string }) => {
+          const key = String(row.fileNumber).trim();
+          if (key && row.medExpire) medMap.set(key, row.medExpire);
+          // Mark as overridden if column C (overwrite) has a non-empty value
+          if (key && row.overwrite) overrideMap.set(key, true);
+        });
+      }
 
-        const unique = Array.from(seen.values());
-        setApplicants(unique.map((row, i) => ds6RowToApplicant(row, i, medMap, notesMap, overrideMap)));
-        setLoading(false);
-      })
-      .catch((err: Error) => {
-        if (cancelled) return;
-        setError(err.message ?? "Failed to load data");
-        setLoading(false);
+      // Build File # → Notes map (DS3)
+      const notesMap = new Map<string, string>();
+      if (notesJson.status === "ok" && Array.isArray(notesJson.data)) {
+        notesJson.data.forEach((row) => {
+          const key = String(row.fileNumber).trim();
+          if (key && row.notes) notesMap.set(key, row.notes);
+        });
+      }
+
+      // Deduplicate by fileNumber — last occurrence wins
+      const seen = new Map<string, DS6Row>();
+      (applicantsJson.data as DS6Row[]).forEach((row) => {
+        const key = String(row.fileNumber ?? "").trim();
+        if (key) seen.set(key, row);
       });
+
+      const unique = Array.from(seen.values());
+      return unique.map((row, i) => ds6RowToApplicant(row, i, medMap, notesMap, overrideMap));
+    };
+
+    const loadMonitoring = async () => {
+      try {
+        const supabaseJson = await fetchSupabaseApplicants(selectedCompanyId);
+        if (cancelled) return;
+
+        if (supabaseJson.status === "ok" && Array.isArray(supabaseJson.data) && supabaseJson.data.length > 0) {
+          setApplicants(supabaseJson.data.map((row, i) => ds6RowToApplicant(row, i, new Map(), new Map(), new Map())));
+          setLoading(false);
+          return;
+        }
+
+        console.info(supabaseJson.message ?? "No Supabase applicants found yet. Falling back to legacy data source.");
+      } catch (supabaseError) {
+        console.warn("Supabase monitoring read failed. Falling back to legacy data source.", supabaseError);
+      }
+
+      const legacyApplicants = await loadLegacyGoogleMonitoring();
+      if (cancelled) return;
+      setApplicants(legacyApplicants);
+      setLoading(false);
+    };
+
+    loadMonitoring().catch((err: Error) => {
+      if (cancelled) return;
+      setError(err.message ?? "Failed to load data");
+      setLoading(false);
+    });
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchTick, isAuthenticated, authLoading, selectedCompanyId, skipAutoRefetch]);
 
-  const updateMonitorMutation = trpc.data.updateMonitor.useMutation();
-  const updateNoteMutation = trpc.data.updateNote.useMutation();
-  const updateMedExpireMutation = trpc.data.updateMedExpire.useMutation();
+  const upsertReadOnlyToast = useCallback(async () => {
+    showReadOnlyMigrationMessage();
+  }, []);
 
-  const writeMonitorStatus = useCallback(async (fileNumber: string, status: "On" | "Off", applicantName?: string) => {
-    // Writes "On" or "Off" to column D of the main monitoring sheet
-    await updateMonitorMutation.mutateAsync({ fileNumber, value: status, applicantName, companyId: selectedCompanyId ?? undefined });
-  }, [updateMonitorMutation, selectedCompanyId]);
+  const writeMonitorStatus = useCallback(async (_fileNumber: string, _status: "On" | "Off", _applicantName?: string) => {
+    // Phase 2A changes reads only. This migration build intentionally does not write to old Google Sheets.
+    await upsertReadOnlyToast();
+  }, [upsertReadOnlyToast]);
 
-  const writeNote = useCallback(async (fileNumber: string, notes: string) => {
-    await updateNoteMutation.mutateAsync({ fileNumber, notes, companyId: selectedCompanyId ?? undefined });
-  }, [updateNoteMutation, selectedCompanyId]);
+  const writeNote = useCallback(async (_fileNumber: string, _notes: string) => {
+    await upsertReadOnlyToast();
+  }, [upsertReadOnlyToast]);
 
-  const writeMedExpire = useCallback(async (fileNumber: string, medExpire: string) => {
-    await updateMedExpireMutation.mutateAsync({ fileNumber, medExpire, companyId: selectedCompanyId ?? undefined });
-  }, [updateMedExpireMutation, selectedCompanyId]);
+  const writeMedExpire = useCallback(async (_fileNumber: string, _medExpire: string) => {
+    await upsertReadOnlyToast();
+  }, [upsertReadOnlyToast]);
 
   const saveSafetyReport = useCallback(async (data: Partial<SafetyReport>): Promise<SafetyReport> => {
     // Always inject the current companyId so the report is scoped to the right company
@@ -259,8 +307,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useAppContext() {
+export function useApp() {
   const ctx = useContext(AppContext);
-  if (!ctx) throw new Error("useAppContext must be used within AppProvider");
+  if (!ctx) throw new Error("useApp must be used within AppProvider");
   return ctx;
 }
