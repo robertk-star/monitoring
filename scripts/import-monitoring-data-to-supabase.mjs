@@ -1,16 +1,12 @@
 import "dotenv/config";
 import {
-  cleanString,
   createPool,
-  fetchJson,
-  getEnv,
   normalizeFileNumber,
   normalizeMonitorStatus,
   parseArgs,
   pickFirst,
   readJsonFile,
   resolveCompanyId,
-  rowsFromGooglePayload,
 } from "./migration-utils.mjs";
 
 function buildLookup(rows, fileKeys, valueKeys) {
@@ -45,28 +41,17 @@ function normalizeApplicantRow(row, lookups) {
   };
 }
 
-async function loadSource(args) {
-  if (args.source) {
-    const payload = readJsonFile(args.source);
-    return {
-      applicants: payload.applicants?.rows ?? payload.applicants ?? [],
-      notes: payload.notes?.rows ?? payload.notes ?? [],
-      medExpire: payload.medExpire?.rows ?? payload.medExpire ?? [],
-      medCerts: payload.medCerts?.rows ?? payload.medCerts ?? [],
-    };
+function loadSource(args) {
+  if (!args.source) {
+    throw new Error("Provide --source migration/data/monitoring-backup.json. This importer does not read from Google Sheets.");
   }
 
-  const applicantsUrl = getEnv("GOOGLE_APPLICANTS_URL") || getEnv("MONITORING_APPLICANTS_URL");
-  if (!applicantsUrl) {
-    throw new Error("Provide --source migration/data/file.json or set GOOGLE_APPLICANTS_URL / MONITORING_APPLICANTS_URL");
-  }
-
-  const fetchOptional = async (url) => url ? rowsFromGooglePayload(await fetchJson(url)) : [];
+  const payload = readJsonFile(args.source);
   return {
-    applicants: await fetchOptional(applicantsUrl),
-    notes: await fetchOptional(getEnv("GOOGLE_NOTES_URL")),
-    medExpire: await fetchOptional(getEnv("GOOGLE_MED_EXPIRE_URL")),
-    medCerts: await fetchOptional(getEnv("GOOGLE_MED_CERTS_URL")),
+    applicants: payload.applicants?.rows ?? payload.applicants ?? payload.rows ?? payload.data ?? [],
+    notes: payload.notes?.rows ?? payload.notes ?? [],
+    medExpire: payload.medExpire?.rows ?? payload.medExpire ?? [],
+    medCerts: payload.medCerts?.rows ?? payload.medCerts ?? [],
   };
 }
 
@@ -104,7 +89,7 @@ async function upsertApplicant(pool, companyId, applicant) {
 async function main() {
   const args = parseArgs();
   const dryRun = Boolean(args["dry-run"] || args.dryRun);
-  const source = await loadSource(args);
+  const source = loadSource(args);
 
   const lookups = {
     notes: buildLookup(source.notes, ["fileNumber", "File #", "File Number"], ["notes", "Notes"]),
