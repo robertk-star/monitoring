@@ -1,8 +1,8 @@
-# Phase 1C Data Migration Guide
+# Database Migration Guide
 
-Phase 1C adds local scripts for moving current data into Supabase.
+This app now uses Supabase as the monitoring data source. Do not use Google Sheets as a data source for this app.
 
-Run these scripts from your computer, not inside Vercel. Do not commit exported applicant data to GitHub.
+Run these scripts from your computer, not inside Vercel. Do not commit real applicant data to GitHub.
 
 ## Required local environment variables
 
@@ -15,49 +15,27 @@ MIGRATION_COMPANY_SLUG="driver-pipeline"
 MIGRATION_COMPANY_NAME="Driver Pipeline"
 ```
 
-For direct Google Apps Script export/import, also set any of these URLs you have:
+## Import Monitoring data from a local backup file
 
-```bash
-GOOGLE_APPLICANTS_URL="current monitoring applicants Apps Script URL"
-GOOGLE_NOTES_URL="current notes Apps Script URL"
-GOOGLE_MED_EXPIRE_URL="current med expire override Apps Script URL"
-GOOGLE_MED_CERTS_URL="current med cert expiration Apps Script URL"
-```
-
-## Step 1: Export current Google monitoring data
-
-```bash
-npm run migrate:export-google
-```
-
-This creates a timestamped JSON file in:
+Place your local backup export in:
 
 ```text
-migration/data/
+migration/data/monitoring-backup.json
 ```
 
-The export can include:
-
-- applicants / monitoring status
-- notes
-- med expire overrides
-- med cert expiration dates
-
-## Step 2: Dry run the monitoring import
+Dry run first:
 
 ```bash
-npm run migrate:monitoring -- --source migration/data/google-monitoring-export-YOUR-FILE.json --dry-run
+npm run migrate:monitoring -- --source migration/data/monitoring-backup.json --dry-run
 ```
 
-Check the counts and the first few normalized rows.
-
-## Step 3: Import monitoring data into Supabase
+Then import:
 
 ```bash
-npm run migrate:monitoring -- --source migration/data/google-monitoring-export-YOUR-FILE.json
+npm run migrate:monitoring -- --source migration/data/monitoring-backup.json
 ```
 
-This upserts into the `applicants` table using this unique key:
+This upserts into the `applicants` table using:
 
 ```text
 fileNumber + companyId
@@ -67,19 +45,18 @@ The script merges by file number:
 
 - monitoring rows become applicant rows
 - notes become `applicants.notes`
-- med expire override rows become `applicants.medExpire`
-- med cert dates are used when no override exists
-- `medExpireOverridden` is true when the med expire came from the override source
+- med expire rows become `applicants.medExpire`
+- `medExpireOverridden` is true when the med expire came from an override source
 
-## Step 4: Import Safety Performance reports
+## Import Safety Performance reports
 
-Export safety reports from the old system as JSON and place the file in:
+Place your local safety report export in:
 
 ```text
 migration/data/safety-reports.json
 ```
 
-Then dry run:
+Dry run:
 
 ```bash
 npm run migrate:safety -- --source migration/data/safety-reports.json --dry-run
