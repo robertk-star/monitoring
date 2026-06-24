@@ -5,6 +5,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerDemoRoute } from "../demoRoute";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import { getApplicants } from "../db";
 
 /**
  * Build the API-only Express app.
@@ -25,6 +26,40 @@ export function createApiApp() {
 
   app.get("/api/health", (_req, res) => {
     res.status(200).json({ ok: true, app: "saffhire-monitoring", runtime: "api" });
+  });
+
+  app.get("/api/monitoring/applicants", async (req, res) => {
+    try {
+      const rawCompanyId = Array.isArray(req.query.companyId) ? req.query.companyId[0] : req.query.companyId;
+      const companyId = rawCompanyId ? Number(rawCompanyId) : undefined;
+      if (rawCompanyId && (!Number.isFinite(companyId) || companyId <= 0)) {
+        res.status(400).json({ status: "error", message: "Invalid companyId" });
+        return;
+      }
+
+      const rows = await getApplicants(companyId);
+      const data = rows.map((row, index) => ({
+        id: String(row.id ?? index + 1),
+        fileNumber: row.fileNumber,
+        name: row.applicantName,
+        orderDate: row.orderDate,
+        monitorStatus: row.monitorStatus,
+        mvrStatus: row.mvrStatus,
+        medExpire: row.medExpire ?? "",
+        medExpireOverridden: row.medExpireOverridden,
+        notes: row.notes,
+      }));
+
+      res.status(200).json({
+        status: "ok",
+        source: "supabase",
+        data,
+        message: data.length > 0 ? "Loaded from Supabase applicants table" : "No Supabase applicants found yet. Run Phase 1C import before switching fully off Google Sheets.",
+      });
+    } catch (error) {
+      console.error("[monitoring/applicants] Supabase read failed:", error);
+      res.status(500).json({ status: "error", message: "Failed to load Supabase applicants" });
+    }
   });
 
   // Kept for compatibility while OAuth routes are still present in the legacy app.
