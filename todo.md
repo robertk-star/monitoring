@@ -1,0 +1,123 @@
+# SaffHire Dashboard TODO
+
+- [x] Rebuild Monitoring page from original site
+- [x] Add SaffHire logo to header
+- [x] Remove New Applicant button
+- [x] Build Safety Performance Reports listing page
+- [x] Build Safety Performance Edit form (5 sections)
+- [x] Add Reports dropdown nav (Monitoring + Safety Performance)
+- [x] Build Dashboard page with KPI cards and charts
+- [x] Expiring Med Certs modal on Dashboard
+- [x] Fetch live data from Google Sheet
+- [x] Read Monitor Status from Column D (MVR On/Off)
+- [x] Write Monitor Status back to Google Sheet on Save
+- [x] Upgrade to full-stack with database and user auth
+- [x] Build custom login page with SaffHire branding
+- [x] Add auth context and protected routes (redirect to login if not authenticated)
+- [x] Add users table with username/password/role to database schema
+- [x] Build Settings page for admin user management (create/edit/delete users, set roles)
+- [x] Hide Settings nav item from non-admin users
+- [x] Seed initial admin user (owner) — handled via first-run setup screen
+- [x] Write vitest tests for auth and user management
+- [x] Fix logo on login page
+- [x] Fix login not working after account creation
+- [x] Add Remember Me checkbox to login page (1 day default, 30 days when checked)
+- [x] Update column D reference from 'MVR On/Off' to 'Monitor' in AppContext
+- [x] Pull Med Expiration dates from second data source and merge into Monitoring table by File #
+- [x] Fix 404 TRPC error on login page
+- [x] Fix 404 error when loading applicant data on Monitoring page after login
+- [x] Make Med Expire text green when a date is present
+- [x] Fix live site OAuth redirect bug (was redirecting to Manus login instead of /login)
+- [x] Scrape all 481 rows (140 with notes) from original SaffHire site
+- [x] Create Google Apps Script for Notes Google Sheet with GET/POST/bulkImport endpoints
+- [x] Bulk-import 140 existing notes into the new Notes Google Sheet
+- [x] Wire dashboard to load notes from Notes Google Sheet on startup
+- [x] Wire Save button to write note changes back to Notes Google Sheet in real time
+- [x] Write vitest tests for notes procedures (4 tests, all passing)
+- [x] Add sortable File Number and Order Date columns to Monitoring table
+- [x] Add admin-only delete records to Safety Performance Reports page
+- [x] Scrape and populate real Safety Performance records from original site
+- [x] Scrape all 26 Safety Performance full detail pages and populate Edit form with all employment data
+- [x] Add Refresh button to Safety Performance page to auto-create new reports from SR Found=Yes rows in Google Sheet
+- [x] Enhance Refresh to pull applicant name from Monitoring sheet by file number
+- [x] Persist Safety Performance records to the database permanently
+- [x] Apply Google Sheet backup pattern to Med Expire dates (persistent across sessions)
+- [x] Highlight expiring Med certs: orange within 60 days, red within 30 days
+- [x] Sync Monitor On/Off toggle back to DP MVR Google Sheet (4th column) when toggled in dashboard
+- [x] Wire Monitor On/Off toggle to new DP Monitoring On/Off Google Sheet (DS6)
+- [x] Rewire all applicant data to single DS6 sheet (File #, Name, Order Date, Monitor On/Off)
+- [x] Fix Med Expire date parsing for Google Sheets GMT timezone string format
+- [x] Add Send Email button to Safety Performance page with Gmail compose integration
+- [x] Auto-save Monitor On/Off toggle on flip (no Save button needed)
+- [x] Add Last Emailed timestamp column to Safety Performance table
+- [x] Add companies table to DB schema (name, slug, sheet URLs)
+- [x] Add viewer_permissions table (userId, companyId, 4 permission toggles)
+- [x] Add companyId to local_users, add viewer to role enum
+- [x] Migrate DB schema
+- [x] Seed Driver Pipeline as first company record
+- [x] Update server procedures to scope data by companyId
+- [x] Build company selector screen (post-login for Super Admin and multi-company Viewers)
+- [x] Update login flow routing based on role and company assignments
+- [x] Update Settings page with Companies management section
+- [x] Update Settings page with per-user permission controls for Viewers
+- [x] Enforce permissions in UI (hide pages, disable edits based on active permissions)
+- [x] Upload safety performance PDF template to S3 for server-side use
+- [x] Build server-side PDF generation procedure using pdf-lib to fill form fields
+- [x] Add Email/Fax options to the Send button on SafetyPerformanceEdit page
+- [x] Wire filled PDF to Gmail compose (email) and fax service (fax)
+- [x] Add in-browser PDF preview to the Email/Fax/Send modal before sending
+- [x] Add mustChangePassword flag to local_users DB schema and migrate
+- [x] Build Change Password page (ChangePassword.tsx) with validation
+- [x] Add changePassword tRPC procedure in routers.ts
+- [x] Redirect to /change-password after login if mustChangePassword is true
+- [x] Protect all dashboard routes from users who haven't changed password yet
+- [x] Set mustChangePassword=true by default on new user creation in Settings
+- [x] Restore missing MVR button on Monitoring page
+- [x] Add notification_emails table to DB schema (email, label, isActive)
+- [x] Add DB helpers for notification email CRUD
+- [x] Add tRPC procedures for notification email management (list, add, remove, toggle)
+- [x] Store SMTP credentials as environment secrets
+- [x] Build server-side email sender using Nodemailer with Gmail SMTP
+- [x] Wire updateMonitor procedure to send email to all active notification recipients on status change
+- [x] Add Notifications tab to Settings page with recipient list management UI
+- [x] Write vitest tests for notification email procedures
+- [x] Default Monitor Status to Off for new records loaded from data source
+- [x] Fix File Number sort to be numeric (stable) instead of lexicographic
+- [x] Grant User (employee) role full edit access to Monitoring and Safety Performance (all except Settings)
+- [x] Keep search filter active during edits on Monitoring page — only clear on Refresh (fixed with skipAutoRefetch flag)
+- [x] FIX: Sticky search - search term memory persists after edits/toggles, re-applies filter automatically
+- [x] Write Google Apps Script for Safety Performance backup sheet (push all DB fields to Google Sheet)
+- [x] Add sheetUrlBackup field to companies table for backup sheet URL
+- [x] Add pushBackup tRPC procedure to write all safety reports to Google Sheet
+- [x] Add "Push Backup to Sheet" button to Safety Performance page (admin only)
+- [x] Write setup guide document for the Google Sheets backup system
+- [x] Add demo mode: public URL /demo that auto-logs in as Demo company without credentials
+- [x] Add server-side demo session endpoint (no password required, scoped to Demo company)
+- [x] Add isDemo flag to LocalAuthContext (no separate context needed)
+- [x] Hide Settings nav link in demo mode
+- [x] Disable all text inputs/textareas in demo mode (Monitoring notes, Med Expire, Save button)
+- [x] Allow toggles to work in demo mode (Monitoring on/off switches)
+- [x] Block New/Edit/Delete/Push Backup buttons in demo mode on Safety Performance page
+- [x] Block /settings, /safety-performance/new, /safety-performance/:id/edit routes for demo users
+- [x] Show Demo Mode badge in header instead of username/logout
+- [x] Add /welcome public landing page with Try Demo CTA button
+- [x] Block demo toggle writes on server (updateMonitor blocked for demo user)
+- [x] Show read-only toast on Monitoring when demo user tries to toggle
+- [x] Add 30-minute inactivity auto-expiry for demo sessions
+- [x] Add /demo-ended page shown after demo session expires
+- [x] Add "Try Demo" link to the login page below the Sign In button
+- [x] Write Google Apps Script for combined Monitoring + Safety Performance backup sheet
+- [x] Add sheetUrlMonitoringBackup field to companies table
+- [x] Add backup.pushToSheet tRPC procedure (Monitoring from client + Safety Performance from DB)
+- [x] Add backup.getCsvData tRPC query (returns CSV strings for client-side download)
+- [x] Add Backup panel to Dashboard page (admin only) with Push to Sheet + Download CSV buttons
+- [x] Add Backup Sheet URL (Monitoring + Safety Performance) field to Settings → Companies dialogs
+- [x] Add writeMedExpireOverwrite to Med Expire Google Apps Script (writes new date to column C by file number)
+- [x] Server updateMedExpire procedure already sends correct payload — no change needed
+- [x] AppContext data loading already reads row.medExpire — no change needed (script handles column C preference)
+- [x] Monitoring Save button already calls writeMedExpire — no change needed
+- [x] Fix updateMedExpire server procedure to manually follow Google Apps Script 302 redirect on POST
+- [ ] Fix Med Expire save — server returns success but sheet is not updated (silent failure on POST to Apps Script)
+- [x] Add visual indicator (pencil icon) next to Med Expire date on Monitoring page when date has been manually overridden
+- [x] FIX: Backup function broken — root cause was 302 redirect issue on both backup POST calls (maxRedirects:10 caused axios to follow redirect and convert POST to GET, stripping body). Fixed with maxRedirects:0 pattern. Also fixed getCsvData "No data returned" by memoizing monitoringRows in Dashboard.tsx to prevent unstable query key.
+- [x] FIX: Push to Sheet backup returns "Backup push failed" and CSV backup returns "No data returned" — fixed by implementing gasPost helper that correctly handles Google Apps Script POST→302→GET pattern
