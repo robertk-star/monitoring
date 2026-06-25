@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Activity, ArrowLeft, ClipboardCheck, Database, LogOut, Pencil, Plus, RefreshCw, Save, Search, Settings, ShieldCheck, Trash2, Truck, UserCog, X } from 'lucide-react';
+import SettingsManager from './SettingsPage.jsx';
 import './styles.css';
 
 const LOGO = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663368468239/3wvjutsFdcEUnRywyqJHNV/SaffhireLogoShirtStyle_0449b2e9.webp';
@@ -140,8 +141,8 @@ function Dashboard({ company, applicants, reports, refresh }) {
         <Metric title="Follow Ups" value={reports.filter((r) => r.followUpDate).length} icon={Activity} />
       </div>
       <section className="card wide-card">
-        <h2>Phase 2 Clean Build</h2>
-        <p>This build adds database-backed Safety Performance listing, create, edit, and delete.</p>
+        <h2>Phase 3 Clean Build</h2>
+        <p>This build adds admin settings, users, notification emails, companies, and CSV import.</p>
         <div className="status-list">{statusCounts.map(([label, count]) => <React.Fragment key={label}><span>{label}</span><b>{count}</b></React.Fragment>)}</div>
       </section>
     </>
@@ -280,10 +281,6 @@ function Field({ label, children }) {
   return <label className="field"><span>{label}</span>{children}</label>;
 }
 
-function SettingsPage({ company }) {
-  return <><Header title="Settings" subtitle="Clean database-only settings" /><section className="card wide-card"><h2>Current Company</h2><p>{company?.name || 'Driver Pipeline'}</p><p className="muted">Phase 3 will add users, notification emails, imports, and finer permissions.</p></section></>;
-}
-
 function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -311,7 +308,7 @@ function App() {
   if (checking) return <div className="center-screen"><div className="spinner" /></div>;
   if (!user) return <Login onAuth={setUser} />;
 
-  return <Layout user={user} page={page} setPage={setPage} onLogout={logout}>{companies.length > 1 ? <div className="company-switcher"><span>Active company</span><select value={companyId} onChange={(e) => setCompanyId(Number(e.target.value))}>{companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div> : null}{page === 'dashboard' && <Dashboard company={company} applicants={applicants} reports={reports} refresh={loadData} />}{page === 'monitoring' && <Monitoring company={company} applicants={applicants} setApplicants={setApplicants} refresh={loadData} />}{page === 'safety' && <Safety company={company} reports={reports} setReports={setReports} refresh={loadData} companyId={companyId} />}{page === 'settings' && <SettingsPage company={company} />}</Layout>;
+  return <Layout user={user} page={page} setPage={setPage} onLogout={logout}>{companies.length > 1 ? <div className="company-switcher"><span>Active company</span><select value={companyId} onChange={(e) => setCompanyId(Number(e.target.value))}>{companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div> : null}{page === 'dashboard' && <Dashboard company={company} applicants={applicants} reports={reports} refresh={loadData} />}{page === 'monitoring' && <Monitoring company={company} applicants={applicants} setApplicants={setApplicants} refresh={loadData} />}{page === 'safety' && <Safety company={company} reports={reports} setReports={setReports} refresh={loadData} companyId={companyId} />}{page === 'settings' && <SettingsManager user={user} company={company} companies={companies} setCompanies={setCompanies} companyId={companyId} refresh={loadData} setApplicants={setApplicants} />}</Layout>;
 }
 
 createRoot(document.getElementById('root')).render(<App />);
