@@ -18,7 +18,8 @@
           !url.startsWith('/api/index') &&
           !url.startsWith('/api/safety-response-link') &&
           !url.startsWith('/api/safety-response') &&
-          !url.startsWith('/api/fmcsa-packet')
+          !url.startsWith('/api/fmcsa-packet') &&
+          !url.startsWith('/api/pdf-medical')
         ) {
           const parts = url.split('?');
           const routePath = parts[0].replace(/^\/api\/?/, '');
@@ -41,5 +42,6 @@
     <script src="/phase8.js"></script>
     <script src="/phase9.js"></script>
     <script src="/phase9b-role-sync.js"></script>
+    <script src="/phase10-medical-pdfs.js"></script>
   </body>
 </html>
