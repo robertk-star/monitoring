@@ -9,24 +9,52 @@
     return Array.from(document.querySelectorAll('.page-header h1')).some((h) => text(h) === 'Monitoring');
   }
 
+  function getMonitoringTable() {
+    const tables = Array.from(document.querySelectorAll('table'));
+    return tables.find((table) => {
+      const headers = Array.from(table.querySelectorAll('thead th')).map((th) => text(th).toLowerCase());
+      return headers.includes('file #') &&
+        headers.includes('name') &&
+        headers.includes('order date') &&
+        headers.includes('monitoring') &&
+        headers.includes('med expire');
+    }) || null;
+  }
+
   function getRows() {
-    return Array.from(document.querySelectorAll('table tbody tr')).filter((row) => row.querySelectorAll('td').length >= 7);
+    const table = getMonitoringTable();
+    if (!table) return [];
+    return Array.from(table.querySelectorAll('tbody tr')).filter((row) => row.querySelectorAll('td').length >= 7);
   }
 
   function getCells(row) {
     return Array.from(row.querySelectorAll('td'));
   }
 
+  function controlValue(container) {
+    if (!container) return '';
+    const input = container.querySelector('input');
+    if (input) return String(input.value || '').trim();
+    const select = container.querySelector('select');
+    if (select) return String(select.value || '').trim();
+    const textarea = container.querySelector('textarea');
+    if (textarea) return String(textarea.value || '').trim();
+    return text(container);
+  }
+
   function parseDate(value) {
     const raw = String(value || '').trim();
     if (!raw || raw === '—') return null;
-    const parts = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
-    if (parts) {
-      const year = parts[3].length === 2 ? Number('20' + parts[3]) : Number(parts[3]);
-      return new Date(year, Number(parts[1]) - 1, Number(parts[2]));
+
+    const us = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+    if (us) {
+      const year = us[3].length === 2 ? Number('20' + us[3]) : Number(us[3]);
+      return new Date(year, Number(us[1]) - 1, Number(us[2]));
     }
-    const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+
+    const iso = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
     if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+
     const d = new Date(raw);
     return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
@@ -43,18 +71,20 @@
 
   function rowData(row) {
     const cells = getCells(row);
-    const medDate = cells[5] ? parseDate(text(cells[5].querySelector('input')) || text(cells[5])) : null;
+    const medExpire = controlValue(cells[5]);
+    const medDate = parseDate(medExpire);
     const days = daysUntil(medDate);
+
     return {
       fileNumber: text(cells[0]),
       name: text(cells[1]),
       orderDate: text(cells[2]),
-      monitorStatus: text(cells[3].querySelector('select')) || text(cells[3]),
+      monitorStatus: controlValue(cells[3]),
       mvrStatus: text(cells[4]),
-      medExpire: cells[5] ? (cells[5].querySelector('input') ? cells[5].querySelector('input').value : text(cells[5])) : '',
+      medExpire,
       medDate,
       medDays: days,
-      notes: cells[6] ? (cells[6].querySelector('input') ? cells[6].querySelector('input').value : text(cells[6])) : ''
+      notes: controlValue(cells[6])
     };
   }
 
@@ -65,7 +95,7 @@
     if (data.medDays < 0) return 'expired-med';
     if (data.medDays <= 30) return 'expiring-30';
     if (data.medDays <= 60) return 'expiring-60';
-    if (/pending|review|needed|expired/i.test(data.mvrStatus || '')) return 'mvr-attention';
+    if (/pending|review|needed|expired|attention/i.test(data.mvrStatus || '')) return 'mvr-attention';
     return 'ok';
   }
 
@@ -80,24 +110,29 @@
       missingMed: 0,
       mvrAttention: 0
     };
+
     getRows().forEach((row) => {
       const data = rowData(row);
       const s = state(row);
       counts.total += 1;
+
       if (data.monitorStatus === 'On') counts.on += 1;
       else counts.off += 1;
+
       if (s === 'expired-med') counts.expiredMed += 1;
       if (s === 'expiring-30') counts.expiring30 += 1;
       if (s === 'expiring-60') counts.expiring60 += 1;
       if (s === 'missing-med') counts.missingMed += 1;
       if (s === 'mvr-attention') counts.mvrAttention += 1;
     });
+
     return counts;
   }
 
   function shouldShow(row, filter) {
     const data = rowData(row);
     const s = state(row);
+
     if (filter === 'all') return true;
     if (filter === 'on') return data.monitorStatus === 'On';
     if (filter === 'off') return data.monitorStatus !== 'On';
@@ -106,6 +141,7 @@
     if (filter === 'expiring-60') return s === 'expiring-60';
     if (filter === 'missing-med') return s === 'missing-med';
     if (filter === 'mvr-attention') return s === 'mvr-attention';
+
     return true;
   }
 
@@ -135,6 +171,7 @@
     const csv = [header, ...rows.map((r) => [r.fileNumber, r.name, r.orderDate, r.monitorStatus, r.mvrStatus, r.medExpire, r.medDays ?? '', r.notes])]
       .map((line) => line.map(csvEscape).join(','))
       .join('\n');
+
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -158,6 +195,7 @@
       `Missing Medical Date: ${counts.missingMed}`,
       `MVR Needs Attention: ${counts.mvrAttention}`
     ].join('\n');
+
     try {
       await navigator.clipboard.writeText(summary);
       toast('Monitoring summary copied.');
@@ -182,12 +220,14 @@
   function badgeHtml(row) {
     const s = state(row);
     const data = rowData(row);
+
     if (s === 'expired-med') return '<span class="phase8-badge danger">Medical expired</span>';
     if (s === 'expiring-30') return `<span class="phase8-badge warn">Medical expires ${data.medDays} days</span>`;
     if (s === 'expiring-60') return `<span class="phase8-badge info">Medical expires ${data.medDays} days</span>`;
     if (s === 'missing-med') return '<span class="phase8-badge danger">Missing medical date</span>';
     if (s === 'mvr-attention') return '<span class="phase8-badge warn">MVR attention</span>';
     if (s === 'ok') return '<span class="phase8-badge ok">OK</span>';
+
     return '<span class="phase8-badge neutral">Off monitoring</span>';
   }
 
@@ -195,6 +235,7 @@
     getRows().forEach((row) => {
       const cells = getCells(row);
       const s = state(row);
+
       row.classList.toggle('phase8-row-expired', s === 'expired-med');
       row.classList.toggle('phase8-row-warning', s === 'expiring-30' || s === 'missing-med' || s === 'mvr-attention');
       row.classList.toggle('phase8-row-info', s === 'expiring-60');
@@ -210,7 +251,6 @@
       }
 
       if (cells[7] && !cells[7].querySelector('.phase8-row-tools')) {
-        const data = rowData(row);
         const holder = document.createElement('div');
         holder.className = 'phase8-row-tools';
         holder.innerHTML = '<button type="button" data-phase8-copy-row>Copy Row</button>';
@@ -230,6 +270,7 @@
       `Days Until Med Expire: ${data.medDays ?? ''}`,
       `Notes: ${data.notes}`
     ].join('\n');
+
     try {
       await navigator.clipboard.writeText(details);
       toast('Monitoring row copied.');
@@ -254,14 +295,16 @@
       <div class="phase8-actions">
         <button type="button" data-phase8-copy-summary>Copy Summary</button>
         <button type="button" data-phase8-download-csv>Download Current View CSV</button>
+        <button type="button" data-phase8-recalculate>Recalculate Alerts</button>
       </div>
-      <p class="phase8-note">Use these alerts to quickly find drivers who need medical card or MVR follow-up.</p>
+      <p class="phase8-note">Alerts now read the actual Monitoring select/input values, including Med Expire fields updated from PDFs.</p>
     `;
   }
 
   function ensurePanel() {
     const header = Array.from(document.querySelectorAll('.page-header h1')).find((h) => text(h) === 'Monitoring');
     if (!header) return null;
+
     let panel = document.getElementById('phase8-panel');
     if (!panel) {
       panel = document.createElement('section');
@@ -275,6 +318,7 @@
   function refreshPanel() {
     const panel = ensurePanel();
     if (!panel) return;
+
     const active = localStorage.getItem(STORAGE_KEY) || 'all';
     panel.innerHTML = panelHtml(countRows());
     applyFilter(active);
@@ -282,6 +326,7 @@
 
   function addStyles() {
     if (document.getElementById('phase8-style')) return;
+
     const style = document.createElement('style');
     style.id = 'phase8-style';
     style.textContent = `
@@ -331,6 +376,12 @@
       return;
     }
 
+    if (event.target && event.target.closest && event.target.closest('[data-phase8-recalculate]')) {
+      refresh();
+      toast('Monitoring alerts recalculated.');
+      return;
+    }
+
     const copyRowButton = event.target && event.target.closest ? event.target.closest('[data-phase8-copy-row]') : null;
     if (copyRowButton) {
       const row = copyRowButton.closest('tr');
@@ -348,12 +399,16 @@
   let lastSignature = '';
   setInterval(() => {
     if (!isMonitoringPage()) return;
-    const signature = getRows().map((row) => text(row)).join('|').slice(0, 7000);
+    const signature = getRows().map((row) => {
+      const data = rowData(row);
+      return [data.fileNumber, data.monitorStatus, data.medExpire, data.mvrStatus, data.notes].join('|');
+    }).join('~').slice(0, 12000);
+
     if (signature !== lastSignature) {
       lastSignature = signature;
       refresh();
     }
-  }, 1500);
+  }, 1000);
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', refresh);
   else refresh();
