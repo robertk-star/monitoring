@@ -124,7 +124,7 @@ function parseDateCandidate(raw: string) {
     }
   }
 
-  m = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  m = value.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
   if (m) return `${m[1]}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[3])).padStart(2, '0')}`;
 
   const d = new Date(value);
@@ -150,7 +150,7 @@ function dateScore(iso: string) {
 
 function findDateNear(text: string, keywords: RegExp, negative?: RegExp) {
   const clean = String(text || '').replace(/\s+/g, ' ');
-  const dateRegex = /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2},?\s+\d{4})/gi;
+  const dateRegex = /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2},?\s+\d{4})/gi;
   const candidates: any[] = [];
   let match: RegExpExecArray | null;
 
@@ -178,14 +178,53 @@ function findDateNear(text: string, keywords: RegExp, negative?: RegExp) {
   return candidates[0]?.score >= 8 ? candidates[0] : null;
 }
 
+
+function findTazWorksMedicalCertificateExpiration(text: string) {
+  const raw = String(text || '');
+  const normalized = raw.replace(/\r/g, '\n');
+
+  // TazWorks section example:
+  // Medical Certificate
+  // Description: ...
+  // Status: CERTIFIED
+  // Issue Date: 2026/03/26
+  // Expiration Date: 2028/03/26
+  const sectionMatch =
+    normalized.match(/medical\s+certificate[\s\S]{0,1800}?(?:self\s+certification|restrictions|examiner|$)/i) ||
+    normalized.match(/medical\s+certificate[\s\S]{0,1800}/i);
+
+  const section = sectionMatch ? sectionMatch[0] : normalized;
+
+  const exact =
+    section.match(/expiration\s+date\s*[:\-]?\s*(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i) ||
+    section.match(/expires?\s*[:\-]?\s*(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i);
+
+  if (exact) {
+    const iso = parseDateCandidate(exact[1]);
+    if (iso) {
+      return {
+        date: iso,
+        rawMatch: exact[1],
+        reason: `TazWorks Medical Certificate Expiration Date matched ${exact[1]}`
+      };
+    }
+  }
+
+  return null;
+}
+
+
 function findMedicalExpiration(text: string) {
+  const tazWorksExact = findTazWorksMedicalCertificateExpiration(text);
+  if (tazWorksExact?.date) return tazWorksExact;
+
   const best = findDateNear(
     text,
     /medical|med\s*expire|med\s*expiration|medical\s*expiration|medical\s*expires|medical\s*cert|medical\s*card|dot\s*physical|physical\s*expiration|mec|examiner|certificate|certification|expiration|expires|valid through|valid until|qualified until/i,
     /birth|dob|date of birth|ssn|social|issued|order date|report date|request date|signature|certified by/i
   );
 
-  if (!best) return { date: '', rawMatch: '', reason: 'No high-confidence medical expiration date found. If this PDF is image-only, OCR will be needed.' };
+  if (!best) return { date: '', rawMatch: '', reason: 'No high-confidence medical expiration date found. Looked for Medical Certificate > Expiration Date. If the PDF is image-only, OCR will be needed.' };
   return { date: best.iso, rawMatch: best.rawDate, reason: `Matched ${best.rawDate}` };
 }
 
