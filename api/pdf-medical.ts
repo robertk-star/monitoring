@@ -78,34 +78,8 @@ function requireAdmin(user: any, res: any) {
   return true;
 }
 
-async function ensureTable() {
-  await query(`
-    create table if not exists medical_pdf_uploads (
-      id bigserial primary key,
-      "companyId" integer not null references companies(id) on delete cascade,
-      "fileName" text not null,
-      "mimeType" text not null default 'application/pdf',
-      "fileSize" integer not null default 0,
-      "pdfData" bytea not null,
-      "uploadedBy" integer references local_users(id) on delete set null,
-      "uploadedAt" timestamptz not null default now(),
-      "extractedExpirationDate" text,
-      "extractedFileNumber" text,
-      "extractedApplicantName" text,
-      "matchedApplicantId" bigint references applicants(id) on delete set null,
-      "scanStatus" text not null default 'uploaded',
-      "scanMessage" text,
-      "scannedAt" timestamptz
-    )
-  `);
-}
-
 function normalizeFileNumber(value: string) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-function numericFileNumber(value: string) {
-  return String(value || '').replace(/[^0-9]/g, '');
 }
 
 function normalizeName(value: string) {
@@ -151,28 +125,15 @@ function findTazWorksMedicalCertificateExpiration(text: string) {
 
   if (exact) {
     const iso = parseDateCandidate(exact[1]);
-    if (iso) return { date: iso, rawMatch: exact[1], reason: `TazWorks Medical Certificate Expiration Date matched ${exact[1]}` };
+    if (iso) return iso;
   }
 
-  return null;
-}
-
-function dateScore(iso: string) {
-  if (!iso) return -999;
-  const d = new Date(`${iso}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return -999;
-  const now = new Date();
-  const days = Math.round((d.getTime() - now.getTime()) / 86400000);
-  if (days < -365) return -20;
-  if (days < 0) return 1;
-  if (days <= 365 * 3) return 5;
-  if (days <= 365 * 5) return 3;
-  return -1;
+  return '';
 }
 
 function findDateNear(text: string, keywords: RegExp, negative?: RegExp) {
   const clean = String(text || '').replace(/\s+/g, ' ');
-  const dateRegex = /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2},?\s+\d{4})/gi;
+  const dateRegex = /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/gi;
   const candidates: any[] = [];
   let match: RegExpExecArray | null;
 
@@ -183,41 +144,38 @@ function findDateNear(text: string, keywords: RegExp, negative?: RegExp) {
     const start = Math.max(0, match.index - 180);
     const end = Math.min(clean.length, match.index + rawDate.length + 180);
     const context = clean.slice(start, end).toLowerCase();
-    let score = dateScore(iso);
-    if (keywords.test(context)) score += 8;
+
+    let score = 0;
+    if (keywords.test(context)) score += 10;
     if (/medical/.test(context)) score += 5;
     if (/certificate|certification|examiner|dot|card|physical|mec|med cert/.test(context)) score += 4;
     if (/expir|expires|expiration|valid through|valid until|qualified until|certificate expiration|card expiration/.test(context)) score += 8;
-    if (negative && negative.test(context)) score -= 6;
+    if (negative && negative.test(context)) score -= 8;
     if (/date of birth|birth|dob|ssn|social|issued|order date|report date|request date|signature|certified by|completed/.test(context)) score -= 5;
-    candidates.push({ iso, rawDate, score, context: clean.slice(start, end) });
+
+    candidates.push({ iso, rawDate, score });
   }
 
   candidates.sort((a, b) => b.score - a.score);
-  return candidates[0]?.score >= 8 ? candidates[0] : null;
+  return candidates[0]?.score >= 8 ? candidates[0].iso : '';
 }
 
 function findMedicalExpiration(text: string) {
-  const tazWorksExact = findTazWorksMedicalCertificateExpiration(text);
-  if (tazWorksExact?.date) return tazWorksExact;
-
-  const best = findDateNear(
-    text,
-    /medical|med\s*expire|med\s*expiration|medical\s*expiration|medical\s*expires|medical\s*cert|medical\s*card|dot\s*physical|physical\s*expiration|mec|examiner|certificate|certification|expiration|expires|valid through|valid until|qualified until/i,
-    /birth|dob|date of birth|ssn|social|issued|order date|report date|request date|signature|certified by/i
-  );
-
-  if (!best) return { date: '', rawMatch: '', reason: 'No Medical Certificate Expiration Date found. Med Expire will be left blank.' };
-  return { date: best.iso, rawMatch: best.rawDate, reason: `Matched ${best.rawDate}` };
+  return findTazWorksMedicalCertificateExpiration(text) ||
+    findDateNear(
+      text,
+      /medical|med\s*expire|med\s*expiration|medical\s*expiration|medical\s*expires|medical\s*cert|medical\s*card|dot\s*physical|physical\s*expiration|mec|examiner|certificate|certification|expiration|expires|valid through|valid until|qualified until/i,
+      /birth|dob|date of birth|ssn|social|issued|order date|report date|request date|signature|certified by/i
+    ) ||
+    '';
 }
 
 function findOrderDate(text: string, fallbackIso: string) {
-  const best = findDateNear(
+  return findDateNear(
     text,
     /order date|ordered|request date|created|application date|date ordered|report date/i,
     /expiration|expires|valid until|valid through|medical|date of birth|dob/i
-  );
-  return best?.iso || fallbackIso || new Date().toISOString().slice(0, 10);
+  ) || fallbackIso || new Date().toISOString().slice(0, 10);
 }
 
 function findFileNumber(text: string, fileName: string) {
@@ -252,19 +210,16 @@ function cleanupName(name: string) {
     .toUpperCase();
 }
 
-function findApplicantName(text: string, fileName?: string) {
+function findApplicantName(text: string) {
   const raw = String(text || '').replace(/\r/g, '\n');
   const clean = raw.replace(/\s+/g, ' ');
 
-  // TazWorks Application Information example:
-  // APPLICANT HARRISON JR, DOY ALPHONZO   SSN XXX-XX-4182   DOB ...
   const applicantLine = clean.match(/\bAPPLICANT\s+(.+?)(?:\s+SSN\b|\s+DOB\b|\s+DRIVERS?\s+LICENSE\b|\s+PHONE\s+NUMBER\b|\s+E-?MAIL\b|\s+ADDRESS\b|$)/i);
   if (applicantLine && applicantLine[1]) {
     const name = cleanupName(applicantLine[1]);
     if (name && name.length >= 3) return name;
   }
 
-  // If APPLICANT is on one line and value is on the next line.
   const lines = raw.split(/\n+/).map((line) => line.trim()).filter(Boolean);
   for (let i = 0; i < lines.length; i++) {
     if (/^APPLICANT$/i.test(lines[i]) && lines[i + 1]) {
@@ -283,8 +238,7 @@ function findApplicantName(text: string, fileName?: string) {
     /candidate\s+name\s*[:\-]?\s*([A-Z][A-Za-z' .,\-]{3,80})/i,
     /driver\s+name\s*[:\-]?\s*([A-Z][A-Za-z' .,\-]{3,80})/i,
     /name\s+of\s+driver\s*[:\-]?\s*([A-Z][A-Za-z' .,\-]{3,80})/i,
-    /employee\s+name\s*[:\-]?\s*([A-Z][A-Za-z' .,\-]{3,80})/i,
-    /name\s*[:\-]?\s*([A-Z][A-Za-z' .,\-]{3,80})\s+(?:DOB|Date of Birth|SSN|Social)/i
+    /employee\s+name\s*[:\-]?\s*([A-Z][A-Za-z' .,\-]{3,80})/i
   ];
 
   for (const p of patterns) {
@@ -304,7 +258,7 @@ async function extractPdfText(buffer: Buffer) {
 
 async function findApplicant(companyId: number, fileNumber: string, applicantName: string) {
   const norm = normalizeFileNumber(fileNumber);
-  const digits = numericFileNumber(fileNumber);
+  const digits = String(fileNumber || '').replace(/[^0-9]/g, '');
 
   if (norm) {
     const byNorm = await query(
@@ -343,7 +297,7 @@ async function findApplicant(companyId: number, fileNumber: string, applicantNam
   return null;
 }
 
-async function createApplicant(companyId: number, data: any) {
+async function upsertApplicant(companyId: number, data: any) {
   const fileNumber = String(data.fileNumber || '').trim();
   let applicantName = String(data.applicantName || '').trim();
 
@@ -376,190 +330,106 @@ async function createApplicant(companyId: number, data: any) {
   return r.rows[0];
 }
 
-async function listUploads(companyId: number) {
-  const r = await query(
-    `select id, "fileName", "fileSize", "uploadedAt", "extractedExpirationDate", "extractedFileNumber", "extractedApplicantName",
-            "matchedApplicantId", "scanStatus", "scanMessage", "scannedAt"
-     from medical_pdf_uploads
-     where "companyId"=$1
-     order by id desc
-     limit 100`,
-    [companyId]
-  );
-  return r.rows;
-}
-
-async function handleUpload(req: any, res: any, user: any) {
+async function handleImport(req: any, res: any, user: any) {
   const body = await readBody(req);
   const companyId = Number(body.companyId || user.companyId || 1);
   const files = Array.isArray(body.files) ? body.files : [];
+
   if (!files.length) return json(res, 400, { status: 'error', message: 'No PDF files were received' });
 
-  let uploaded = 0;
-  const rows: any[] = [];
+  const results: any[] = [];
+  const summary = { scanned: 0, created: 0, updated: 0, skipped: 0, errors: 0 };
 
   for (const file of files) {
     const fileName = String(file.fileName || 'uploaded.pdf').trim();
-    const mimeType = String(file.mimeType || 'application/pdf').trim();
     const base64 = String(file.base64 || '').split(',').pop() || '';
     const buffer = Buffer.from(base64, 'base64');
 
-    if (!buffer.length) continue;
-    if (buffer.length > 6 * 1024 * 1024) {
-      rows.push({ fileName, status: 'skipped', message: 'File is larger than 6MB' });
-      continue;
-    }
+    summary.scanned++;
 
-    const initialFileNumber = findFileNumber('', fileName);
-
-    const r = await query(
-      `insert into medical_pdf_uploads ("companyId","fileName","mimeType","fileSize","pdfData","uploadedBy","scanStatus","extractedFileNumber")
-       values ($1,$2,$3,$4,$5,$6,'uploaded',$7)
-       returning id, "fileName", "fileSize", "scanStatus", "extractedFileNumber"`,
-      [companyId, fileName, mimeType, buffer.length, buffer, user.id, initialFileNumber || null]
-    );
-    uploaded += 1;
-    rows.push(r.rows[0]);
-  }
-
-  return json(res, 200, { status: 'ok', uploaded, rows, uploads: await listUploads(companyId) });
-}
-
-async function handleScan(req: any, res: any, user: any) {
-  const body = await readBody(req);
-  const companyId = Number(body.companyId || user.companyId || 1);
-  const scanAll = Boolean(body.scanAll);
-  const createMissing = Boolean(body.createMissing);
-  const filter = scanAll ? '' : `and "scanStatus" in ('uploaded','no_match','no_date','error','no_text')`;
-
-  const uploads = await query(
-    `select id, "fileName", "pdfData", "uploadedAt" from medical_pdf_uploads where "companyId"=$1 ${filter} order by id asc limit 100`,
-    [companyId]
-  );
-
-  const summary = { scanned: uploads.rows.length, updated: 0, created: 0, noMatch: 0, noDate: 0, errors: 0 };
-  const results: any[] = [];
-
-  for (const upload of uploads.rows) {
     try {
-      const buffer = Buffer.from(upload.pdfData);
+      if (!buffer.length) {
+        summary.skipped++;
+        results.push({ fileName, status: 'skipped', message: 'Empty PDF file' });
+        continue;
+      }
+
+      if (buffer.length > 6 * 1024 * 1024) {
+        summary.skipped++;
+        results.push({ fileName, status: 'skipped', message: 'File is larger than 6MB' });
+        continue;
+      }
+
       const pdfText = await extractPdfText(buffer);
-      const extractedFileNumber = findFileNumber(pdfText, upload.fileName);
-      const extractedApplicantName = findApplicantName(pdfText, upload.fileName);
-      const orderDate = findOrderDate(pdfText, new Date(upload.uploadedAt || Date.now()).toISOString().slice(0, 10));
-      const exp = findMedicalExpiration(pdfText);
-
       if (!pdfText || pdfText.trim().length < 20) {
-        summary.noMatch++;
-        await query(
-          `update medical_pdf_uploads
-           set "extractedFileNumber"=$1, "extractedApplicantName"=$2, "scanStatus"='no_text',
-               "scanMessage"=$3, "scannedAt"=now()
-           where id=$4`,
-          [extractedFileNumber || null, extractedApplicantName || null, 'No readable PDF text found. This may be scanned/image-only and need OCR.', upload.id]
-        );
-        results.push({ id: upload.id, fileName: upload.fileName, status: 'no_text', fileNumber: extractedFileNumber, message: 'No readable PDF text' });
-        continue;
-      }
-
-      let applicant = await findApplicant(companyId, extractedFileNumber, extractedApplicantName);
-      let wasCreated = false;
-
-      if (!applicant && createMissing && extractedFileNumber) {
-        applicant = await createApplicant(companyId, {
-          fileNumber: extractedFileNumber,
-          applicantName: extractedApplicantName || '',
-          orderDate,
-          medExpire: exp.date || '',
-          fileName: upload.fileName
-        });
-        wasCreated = true;
-      }
-
-      if (!applicant) {
-        summary.noMatch++;
-        const reason = `No matching Monitoring record found for file #${extractedFileNumber || 'unknown'}. ${createMissing ? 'Could not create because file number was missing.' : 'Use Create/Update Monitoring from PDFs to create missing records.'}`;
-        await query(
-          `update medical_pdf_uploads
-           set "extractedExpirationDate"=$1, "extractedFileNumber"=$2, "extractedApplicantName"=$3,
-               "scanStatus"='no_match', "scanMessage"=$4, "scannedAt"=now()
-           where id=$5`,
-          [exp.date || null, extractedFileNumber || null, extractedApplicantName || null, reason, upload.id]
-        );
-        results.push({ id: upload.id, fileName: upload.fileName, status: 'no_match', expirationDate: exp.date, fileNumber: extractedFileNumber, applicantName: extractedApplicantName, orderDate, message: reason });
-        continue;
-      }
-
-      if (!wasCreated) {
-        if (exp.date) {
-          await query(
-            `update applicants
-             set "medExpire"=$1,
-                 "medExpireOverridden"=true,
-                 "updatedAt"=now()
-             where id=$2 and "companyId"=$3`,
-            [exp.date, applicant.id, companyId]
-          );
+        const fallbackFileNumber = findFileNumber('', fileName);
+        if (!fallbackFileNumber) {
+          summary.skipped++;
+          results.push({ fileName, status: 'no_text', message: 'No readable PDF text and no file number in filename' });
+          continue;
         }
-        summary.updated++;
-      } else {
-        summary.created++;
+
+        const existing = await findApplicant(companyId, fallbackFileNumber, '');
+        const row = await upsertApplicant(companyId, {
+          fileNumber: fallbackFileNumber,
+          applicantName: existing?.applicantName || 'REVIEW NAME NEEDED',
+          orderDate: new Date().toISOString().slice(0, 10),
+          medExpire: ''
+        });
+        summary[existing ? 'updated' : 'created']++;
+        results.push({ fileName, status: existing ? 'updated' : 'created', fileNumber: row.fileNumber, applicantName: row.applicantName, medExpire: '', message: 'No readable PDF text; created/updated by filename only' });
+        continue;
       }
 
-      const scanStatus = wasCreated ? 'created' : 'updated';
-      const scanMessage = exp.date
-        ? `${wasCreated ? 'Created' : 'Updated'} ${applicant.applicantName} (${applicant.fileNumber}) with medical expiration ${exp.date}`
-        : `${wasCreated ? 'Created' : 'Found'} ${applicant.applicantName} (${applicant.fileNumber}); no Medical Certificate Expiration Date found, Med Expire left blank`;
+      const fileNumber = findFileNumber(pdfText, fileName);
+      if (!fileNumber) {
+        summary.skipped++;
+        results.push({ fileName, status: 'skipped', message: 'No file number found in filename or PDF text' });
+        continue;
+      }
 
-      await query(
-        `update medical_pdf_uploads
-         set "extractedExpirationDate"=$1, "extractedFileNumber"=$2, "extractedApplicantName"=$3,
-             "matchedApplicantId"=$4, "scanStatus"=$5, "scanMessage"=$6, "scannedAt"=now()
-         where id=$7`,
-        [
-          exp.date || null,
-          extractedFileNumber || applicant.fileNumber,
-          extractedApplicantName || applicant.applicantName,
-          applicant.id,
-          scanStatus,
-          scanMessage,
-          upload.id
-        ]
-      );
+      const applicantName = findApplicantName(pdfText);
+      const medExpire = findMedicalExpiration(pdfText);
+      const orderDate = findOrderDate(pdfText, new Date().toISOString().slice(0, 10));
+      const existing = await findApplicant(companyId, fileNumber, applicantName);
 
-      results.push({ id: upload.id, fileName: upload.fileName, status: scanStatus, expirationDate: exp.date, fileNumber: applicant.fileNumber, applicantName: applicant.applicantName, orderDate });
+      const row = await upsertApplicant(companyId, {
+        fileNumber,
+        applicantName,
+        orderDate,
+        medExpire
+      });
+
+      summary[existing ? 'updated' : 'created']++;
+      results.push({
+        fileName,
+        status: existing ? 'updated' : 'created',
+        fileNumber: row.fileNumber,
+        applicantName: row.applicantName,
+        orderDate,
+        medExpire,
+        message: medExpire ? 'Applicant record saved with medical expiration date' : 'Applicant record saved; Med Expire left blank'
+      });
     } catch (error: any) {
       summary.errors++;
-      await query(
-        `update medical_pdf_uploads set "scanStatus"='error', "scanMessage"=$1, "scannedAt"=now() where id=$2`,
-        [error?.message || 'PDF scan failed', upload.id]
-      );
-      results.push({ id: upload.id, fileName: upload.fileName, status: 'error', message: error?.message || 'PDF scan failed' });
+      results.push({ fileName, status: 'error', message: error?.message || 'PDF import failed' });
     }
   }
 
-  return json(res, 200, { status: 'ok', summary, results, uploads: await listUploads(companyId) });
+  return json(res, 200, { status: 'ok', summary, results });
 }
 
 export default async function handler(req: any, res: any) {
   try {
     const user = await getUser(req);
     if (!requireAdmin(user, res)) return;
-    await ensureTable();
 
-    const url = new URL(req.url || '/', 'https://local.test');
-    const action = url.searchParams.get('action') || '';
-
-    if (req.method === 'GET') {
-      const companyId = Number(url.searchParams.get('companyId') || user.companyId || 1);
-      return json(res, 200, { status: 'ok', uploads: await listUploads(companyId) });
+    if (req.method !== 'POST') {
+      return json(res, 405, { status: 'error', message: 'Method not allowed. Upload PDFs from the Settings panel.' });
     }
 
-    if (req.method === 'POST' && action === 'upload') return handleUpload(req, res, user);
-    if (req.method === 'POST' && action === 'scan') return handleScan(req, res, user);
-
-    return json(res, 405, { status: 'error', message: 'Method/action not allowed' });
+    return handleImport(req, res, user);
   } catch (error: any) {
-    return json(res, 500, { status: 'error', message: error?.message || 'Medical PDF API failed' });
+    return json(res, 500, { status: 'error', message: error?.message || 'Medical PDF import failed' });
   }
 }
