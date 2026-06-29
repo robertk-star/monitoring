@@ -32,39 +32,27 @@
   function escapeHtml(value) {
     return String(value ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;");
   }
-  function formatSize(size) {
-    const n = Number(size || 0);
-    if (!n) return '';
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  }
-  function renderUploads(uploads) {
-    const tbody = document.querySelector('#phase10-upload-table tbody');
+  function renderResults(results) {
+    const tbody = document.querySelector('#phase10-import-table tbody');
     if (!tbody) return;
-    const rows = Array.isArray(uploads) ? uploads : [];
+    const rows = Array.isArray(results) ? results : [];
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="phase10-empty">No medical PDFs uploaded yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="phase10-empty">No import results yet.</td></tr>';
       return;
     }
     tbody.innerHTML = rows.map((row) => `
       <tr>
         <td>${escapeHtml(row.fileName || '')}</td>
-        <td>${formatSize(row.fileSize)}</td>
-        <td><span class="phase10-status ${escapeHtml(row.scanStatus || '')}">${escapeHtml(row.scanStatus || '')}</span></td>
-        <td>${escapeHtml(row.extractedExpirationDate || '')}</td>
-        <td>${escapeHtml(row.extractedFileNumber || '')}</td>
-        <td>${escapeHtml(row.extractedApplicantName || '')}</td>
-        <td>${escapeHtml(row.scanMessage || '')}</td>
+        <td><span class="phase10-status ${escapeHtml(row.status || '')}">${escapeHtml(row.status || '')}</span></td>
+        <td>${escapeHtml(row.fileNumber || '')}</td>
+        <td>${escapeHtml(row.applicantName || '')}</td>
+        <td>${escapeHtml(row.orderDate || '')}</td>
+        <td>${escapeHtml(row.medExpire || '')}</td>
+        <td>${escapeHtml(row.message || '')}</td>
       </tr>
     `).join('');
   }
-  async function refreshUploads() {
-    const companyId = getCompanyId();
-    const data = await api(`/api/pdf-medical?companyId=${encodeURIComponent(companyId)}`);
-    renderUploads(data.uploads || []);
-  }
-  async function uploadPdfs() {
+  async function importPdfs() {
     const input = document.getElementById('phase10-files');
     const files = Array.from(input && input.files ? input.files : []);
     if (!files.length) return toast('Choose one or more PDF files first.', true);
@@ -75,63 +63,51 @@
       payloadFiles.push({ fileName: file.name, mimeType: file.type || 'application/pdf', base64: await readFileAsBase64(file) });
     }
     if (!payloadFiles.length) return;
-    const button = document.getElementById('phase10-upload');
-    button.disabled = true; button.textContent = 'Uploading...';
+
+    const button = document.getElementById('phase10-import');
+    button.disabled = true;
+    button.textContent = 'Scanning PDFs...';
+
     try {
-      const data = await api('/api/pdf-medical?action=upload', { method: 'POST', body: JSON.stringify({ companyId: getCompanyId(), files: payloadFiles }) });
-      renderUploads(data.uploads || []);
+      const data = await api('/api/pdf-medical', { method: 'POST', body: JSON.stringify({ companyId: getCompanyId(), files: payloadFiles }) });
+      renderResults(data.results || []);
       input.value = '';
-      toast(`Uploaded ${data.uploaded} PDF file(s).`);
-    } catch (error) { toast(error.message || 'PDF upload failed.', true); }
-    finally { button.disabled = false; button.textContent = 'Upload PDFs'; }
-  }
-  async function scanPdfs(scanAll, createMissing) {
-    const buttons = ['phase10-scan','phase10-scan-create','phase10-scan-all'].map((id) => document.getElementById(id)).filter(Boolean);
-    buttons.forEach((b) => b.disabled = true);
-    const primary = document.getElementById(createMissing ? 'phase10-scan-create' : 'phase10-scan');
-    if (primary) primary.textContent = 'Scanning...';
-    try {
-      const data = await api('/api/pdf-medical?action=scan', { method: 'POST', body: JSON.stringify({ companyId: getCompanyId(), scanAll: Boolean(scanAll), createMissing: Boolean(createMissing) }) });
-      renderUploads(data.uploads || []);
       const s = data.summary || {};
-      toast(`Scan complete. Updated ${s.updated || 0}. Created ${s.created || 0}. No match ${s.noMatch || 0}. No date ${s.noDate || 0}. Errors ${s.errors || 0}.`);
-    } catch (error) { toast(error.message || 'PDF scan failed.', true); }
-    finally {
-      buttons.forEach((b) => b.disabled = false);
-      const scan = document.getElementById('phase10-scan');
-      const create = document.getElementById('phase10-scan-create');
-      if (scan) scan.textContent = 'Update Existing Only';
-      if (create) create.textContent = 'Create/Update Monitoring from PDFs';
+      toast(`PDF import complete. Created ${s.created || 0}. Updated ${s.updated || 0}. Skipped ${s.skipped || 0}. Errors ${s.errors || 0}. Go to Monitoring and click Refresh.`);
+    } catch (error) {
+      toast(error.message || 'PDF import failed.', true);
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Scan PDFs into Applicant Database';
     }
   }
   function panelHtml() {
     return `
-      <h2>Medical PDF Upload & Scan</h2>
-      <p class="muted">Admin only. Upload medical PDFs into the database, then scan them for medical expiration dates and Monitoring records.</p>
+      <h2>PDF Import to Applicant Database</h2>
+      <p class="muted">Admin only. Upload TazWorks PDFs here. The app scans each PDF immediately and creates/updates records in the applicant database. PDFs are not saved in a separate PDF table.</p>
       <div class="phase10-warning">
-        For new records, the scan needs a <b>file number</b> and <b>applicant name</b>. Best practice: name files like <b>5060-Julian-Ballesteros-medical-card.pdf</b>.
+        TazWorks filenames like <b>report_6340.pdf</b> are supported. The app pulls the file number from the filename and applicant name from the <b>APPLICANT</b> line in the PDF.
       </div>
       <div class="phase10-actions">
         <input id="phase10-files" type="file" accept="application/pdf,.pdf" multiple />
-        <button id="phase10-upload" class="primary-inline" type="button">Upload PDFs</button>
-        <button id="phase10-scan" class="secondary-btn" type="button">Update Existing Only</button>
-        <button id="phase10-scan-create" class="secondary-btn phase10-create-btn" type="button">Create/Update Monitoring from PDFs</button>
-        <button id="phase10-scan-all" class="secondary-btn" type="button">Rescan All</button>
-        <button id="phase10-refresh" class="secondary-btn" type="button">Refresh PDF List</button>
+        <button id="phase10-import" class="primary-inline" type="button">Scan PDFs into Applicant Database</button>
       </div>
-      <p class="phase10-note"><b>Update Existing Only</b> updates Med Expire for matched applicants. <b>Create/Update Monitoring from PDFs</b> creates a new Monitoring row when no matching record exists and the PDF has enough information.</p>
+      <p class="phase10-note">Records are created for each PDF with a file number. Med Expire is filled only when the Medical Certificate Expiration Date is found.</p>
       <div class="phase10-table-wrap">
-        <table id="phase10-upload-table">
+        <table id="phase10-import-table">
           <thead>
-            <tr><th>PDF</th><th>Size</th><th>Status</th><th>Medical Expire</th><th>File #</th><th>Name</th><th>Message</th></tr>
+            <tr><th>PDF</th><th>Status</th><th>File #</th><th>Name</th><th>Order Date</th><th>Med Expire</th><th>Message</th></tr>
           </thead>
-          <tbody><tr><td colspan="7" class="phase10-empty">Loading...</td></tr></tbody>
+          <tbody><tr><td colspan="7" class="phase10-empty">No import results yet.</td></tr></tbody>
         </table>
       </div>
     `;
   }
   function ensurePanel() {
     if (!isSettingsPage() || document.getElementById('phase10-panel')) return;
+    const oldPanels = Array.from(document.querySelectorAll('section')).filter((section) => text(section).includes('Medical PDF Upload & Scan'));
+    oldPanels.forEach((section) => section.remove());
+
     const anchor = Array.from(document.querySelectorAll('section.card')).find((section) => text(section).includes('Import Monitoring CSV'));
     const panel = document.createElement('section');
     panel.id = 'phase10-panel';
@@ -139,12 +115,7 @@
     panel.innerHTML = panelHtml();
     if (anchor) anchor.insertAdjacentElement('afterend', panel);
     else document.querySelector('.main-panel').appendChild(panel);
-    document.getElementById('phase10-upload').addEventListener('click', uploadPdfs);
-    document.getElementById('phase10-scan').addEventListener('click', () => scanPdfs(false, false));
-    document.getElementById('phase10-scan-create').addEventListener('click', () => scanPdfs(false, true));
-    document.getElementById('phase10-scan-all').addEventListener('click', () => scanPdfs(true, true));
-    document.getElementById('phase10-refresh').addEventListener('click', () => refreshUploads().catch((error) => toast(error.message, true)));
-    refreshUploads().catch((error) => { renderUploads([]); toast(error.message || 'Could not load medical PDF uploads.', true); });
+    document.getElementById('phase10-import').addEventListener('click', importPdfs);
   }
   function addStyles() {
     if (document.getElementById('phase10-style')) return;
@@ -154,18 +125,17 @@
       .phase10-panel { border-left: 5px solid #10b981; }
       .phase10-warning { background: #ecfdf5; border: 1px solid #bbf7d0; color: #166534; border-radius: 12px; padding: 10px 12px; margin: 10px 0 14px; }
       .phase10-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
-      .phase10-actions input[type=file] { width: min(420px, 100%); }
-      .phase10-create-btn { background: #065f46 !important; }
+      .phase10-actions input[type=file] { width: min(520px, 100%); }
       .phase10-note { color: #64748b; font-size: 13px; margin: 0 0 14px; }
       .phase10-table-wrap { overflow: auto; border: 1px solid #e5e7eb; border-radius: 14px; }
-      #phase10-upload-table { width: 100%; border-collapse: collapse; }
-      #phase10-upload-table th, #phase10-upload-table td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 13px; vertical-align: top; }
-      #phase10-upload-table th { background: #f8fafc; text-transform: uppercase; font-size: 12px; color: #475569; }
+      #phase10-import-table { width: 100%; border-collapse: collapse; }
+      #phase10-import-table th, #phase10-import-table td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 13px; vertical-align: top; }
+      #phase10-import-table th { background: #f8fafc; text-transform: uppercase; font-size: 12px; color: #475569; }
       .phase10-empty { text-align: center; color: #64748b; padding: 28px !important; }
       .phase10-status.created { background:#dcfce7; color:#166534; padding:3px 7px; border-radius:999px; font-weight:800; }
       .phase10-status.updated { background:#dbeafe; color:#1d4ed8; padding:3px 7px; border-radius:999px; font-weight:800; }
-      .phase10-status.no_match, .phase10-status.no_date, .phase10-status.error { background:#fee2e2; color:#991b1b; padding:3px 7px; border-radius:999px; font-weight:800; }
-      .phase10-toast { position: fixed; right: 18px; bottom: 18px; z-index: 10020; background: #111827; color: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 18px 45px rgba(15,23,42,.25); font-size: 14px; max-width: 460px; }
+      .phase10-status.skipped, .phase10-status.error, .phase10-status.no_text { background:#fee2e2; color:#991b1b; padding:3px 7px; border-radius:999px; font-weight:800; }
+      .phase10-toast { position: fixed; right: 18px; bottom: 18px; z-index: 10020; background: #111827; color: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 18px 45px rgba(15,23,42,.25); font-size: 14px; max-width: 520px; }
       .phase10-toast.danger { background: #991b1b; }
     `;
     document.head.appendChild(style);
