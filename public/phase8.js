@@ -1,5 +1,5 @@
 (function () {
-  const FILTER_KEY = 'saffhire_monitoring_filter_final_v2';
+  const FILTER_KEY = 'saffhire_monitoring_filter_header_sort_v1';
   let sortKey = '';
   let sortDir = 'asc';
   let lastSignature = '';
@@ -69,11 +69,6 @@
     return new Date(now.getFullYear(), now.getMonth(), now.getDate());
   }
 
-  function daysUntil(date) {
-    if (!date) return null;
-    return Math.ceil((date.getTime() - today().getTime()) / 86400000);
-  }
-
   function rowData(row) {
     const c = cells(row);
     const medExpire = value(c[5]);
@@ -86,7 +81,7 @@
       mvrStatus: text(c[4]),
       medExpire,
       medDate,
-      medDays: daysUntil(medDate),
+      medDays: medDate ? Math.ceil((medDate.getTime() - today().getTime()) / 86400000) : null,
       notes: value(c[6])
     };
   }
@@ -195,8 +190,10 @@
     Object.entries(map).forEach(([key, index]) => {
       const th = headers[index];
       if (!th) return;
+
       const label = th.dataset.originalLabel || text(th).replace(/[↕↑↓]/g, '').trim();
       th.dataset.originalLabel = label;
+
       const arrow = sortKey === key ? (sortDir === 'asc' ? '↑' : '↓') : '↕';
       const muted = sortKey === key ? '' : ' muted';
       th.innerHTML = `${label} <span class="monitoring-sort-arrow${muted}">${arrow}</span>`;
@@ -331,14 +328,11 @@
         <button type="button" data-monitoring-filter="mvr"><b>${c.mvr}</b>MVR Attention</button>
       </div>
       <div class="monitoring-alert-actions">
-        <button type="button" data-monitoring-sort="file">Sort File #</button>
-        <button type="button" data-monitoring-sort="name">Sort Name</button>
-        <button type="button" data-monitoring-sort="order">Sort Order Date</button>
-        <button type="button" data-monitoring-sort="med">Sort Med Expire</button>
         <button type="button" data-monitoring-copy>Copy Summary</button>
         <button type="button" data-monitoring-download>Download Current View CSV</button>
         <button type="button" data-monitoring-recalculate>Recalculate Alerts</button>
       </div>
+      <p class="monitoring-alert-note">Sort records by clicking the table headers for File #, Name, Order Date, or Med Expire.</p>
     `;
 
     applyFilter(localStorage.getItem(FILTER_KEY) || 'all');
@@ -446,6 +440,12 @@
         background: #e0f2fe;
       }
 
+      .monitoring-alert-note {
+        margin: 10px 0 0;
+        color: #64748b;
+        font-size: 13px;
+      }
+
       .monitoring-sortable {
         cursor: pointer;
         user-select: none;
@@ -537,12 +537,6 @@
     const filter = event.target && event.target.closest ? event.target.closest('[data-monitoring-filter]') : null;
     if (filter) {
       applyFilter(filter.dataset.monitoringFilter || 'all');
-      return;
-    }
-
-    const sort = event.target && event.target.closest ? event.target.closest('[data-monitoring-sort]') : null;
-    if (sort) {
-      sortRows(sort.dataset.monitoringSort);
       return;
     }
 
