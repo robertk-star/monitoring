@@ -19,7 +19,8 @@
           !url.startsWith('/api/safety-response-link') &&
           !url.startsWith('/api/safety-response') &&
           !url.startsWith('/api/fmcsa-packet') &&
-          !url.startsWith('/api/pdf-medical')
+          !url.startsWith('/api/pdf-medical') &&
+          !url.startsWith('/api/orders')
         ) {
           const parts = url.split('?');
           const routePath = parts[0].replace(/^\/api\/?/, '');
@@ -42,13 +43,14 @@
     <script src="/phase7.js"></script>
     <script src="/phase7a-fmcsa.js"></script>
 
-    <!-- Stable scripts only -->
+    <!-- Stable scripts -->
     <script src="/phase8.js"></script>
     <script src="/phase9.js"></script>
     <script src="/phase9b-role-sync.js"></script>
     <script src="/phase10-medical-pdfs.js"></script>
-
-    <!-- Safe one-click header sorter -->
     <script src="/phase10r-safe-header-sort.js"></script>
+
+    <!-- TazWorks proxy connection test -->
+    <script src="/phase11-tazworks-connection.js"></script>
   </body>
 </html>
