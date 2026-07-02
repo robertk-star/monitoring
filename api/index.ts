@@ -211,7 +211,7 @@ async function systemCheck(req: any, res: any, user: any) {
   return json(res, 200, { status: 'ok', checks });
 }
 
-// PHASE12A4_TAZWORKS_SYNC START
+// PHASE12A5_TAZWORKS_SYNC START
 function tazworksSyncEnv() {
   const baseUrl = String(process.env.TAZWORKS_PROXY_BASE_URL || '').replace(/\/+$/, '');
   const proxySecret = String(process.env.TAZWORKS_PROXY_SECRET || '');
@@ -232,14 +232,87 @@ function tazworksSafeMessage(errorText: string, statusCode?: number) {
   return 'The order connection is currently unavailable.';
 }
 
+function tazworksPayloadKeys(payload: any) {
+  if (!payload || typeof payload !== 'object') return [];
+  return Object.keys(payload).slice(0, 30);
+}
+
+function tazworksFindArrays(payload: any, path = '', depth = 0): any[] {
+  if (!payload || depth > 3) return [];
+  if (Array.isArray(payload)) return [{ path: path || 'root', value: payload }];
+  if (typeof payload !== 'object') return [];
+
+  const found: any[] = [];
+  for (const [key, value] of Object.entries(payload)) {
+    const nextPath = path ? `${path}.${key}` : key;
+    if (Array.isArray(value)) found.push({ path: nextPath, value });
+    else if (value && typeof value === 'object') found.push(...tazworksFindArrays(value, nextPath, depth + 1));
+  }
+  return found;
+}
+
+function tazworksLooksLikeOrder(row: any) {
+  if (!row || typeof row !== 'object') return false;
+  return Boolean(
+    row.orderGuid ||
+    row.guid ||
+    row.id ||
+    row.fileNumber ||
+    row.fileNo ||
+    row.orderNumber ||
+    row.applicantName ||
+    row.subjectName ||
+    row.orderStatus ||
+    row.status
+  );
+}
+
 function tazworksArray(payload: any) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.content)) return payload.content;
-  if (Array.isArray(payload?.orders)) return payload.orders;
-  if (Array.isArray(payload?.items)) return payload.items;
-  if (Array.isArray(payload?.data)) return payload.data;
-  if (Array.isArray(payload?.results)) return payload.results;
-  return [];
+  const preferred = [
+    payload,
+    payload?.content,
+    payload?.orders,
+    payload?.items,
+    payload?.data,
+    payload?.results,
+    payload?.response,
+    payload?.response?.content,
+    payload?.response?.orders,
+    payload?._embedded?.orders,
+    payload?._embedded?.content,
+  ];
+
+  for (const candidate of preferred) {
+    if (Array.isArray(candidate) && candidate.some(tazworksLooksLikeOrder)) return candidate;
+  }
+
+  const arrays = tazworksFindArrays(payload);
+  const best = arrays.find((item) => item.value.some(tazworksLooksLikeOrder));
+  return best ? best.value : [];
+}
+
+function tazworksArrayPath(payload: any) {
+  const preferred: Array<[string, any]> = [
+    ['root', payload],
+    ['content', payload?.content],
+    ['orders', payload?.orders],
+    ['items', payload?.items],
+    ['data', payload?.data],
+    ['results', payload?.results],
+    ['response', payload?.response],
+    ['response.content', payload?.response?.content],
+    ['response.orders', payload?.response?.orders],
+    ['_embedded.orders', payload?._embedded?.orders],
+    ['_embedded.content', payload?._embedded?.content],
+  ];
+
+  for (const [path, candidate] of preferred) {
+    if (Array.isArray(candidate) && candidate.some(tazworksLooksLikeOrder)) return path;
+  }
+
+  const arrays = tazworksFindArrays(payload);
+  const best = arrays.find((item) => item.value.some(tazworksLooksLikeOrder));
+  return best ? best.path : 'not_found';
 }
 
 function tazworksIso(value: any) {
@@ -325,12 +398,38 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
   let safetyReportsUpdated = 0;
   let errorsCount = 0;
   const errors: string[] = [];
+  const pageSummaries: any[] = [];
+  const dedupe = new Map<string, any>();
 
   try {
     const env = tazworksSyncEnv();
-    const payload = await tazworksProxyGet(`/tazworks/orders?page=0&size=50&clientGuid=${encodeURIComponent(env.clientGuid)}`);
-    const orders = tazworksArray(payload).map(tazworksOrder).filter((order: any) => order.orderGuid || order.fileNumber);
+    const maxPages = 5;
+    const size = 10;
 
+    for (let page = 0; page < maxPages; page++) {
+      const payload = await tazworksProxyGet(`/tazworks/orders?page=${page}&size=${size}&clientGuid=${encodeURIComponent(env.clientGuid)}`);
+      const list = tazworksArray(payload);
+      const path = tazworksArrayPath(payload);
+      const keys = tazworksPayloadKeys(payload);
+
+      pageSummaries.push({
+        page,
+        size,
+        arrayPath: path,
+        arrayCount: list.length,
+        topLevelKeys: keys,
+      });
+
+      for (const row of list) {
+        const order = tazworksOrder(row);
+        const key = String(order.orderGuid || order.fileNumber || JSON.stringify(row).slice(0, 100));
+        if (!dedupe.has(key)) dedupe.set(key, order);
+      }
+
+      if (list.length < size) break;
+    }
+
+    const orders = Array.from(dedupe.values()).filter((order: any) => order.orderGuid || order.fileNumber);
     ordersPulled = orders.length;
 
     for (const order of orders) {
@@ -416,13 +515,28 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
     }
 
     const status = errorsCount ? 'completed_with_errors' : 'completed';
-    const message = errorsCount
-      ? `Sync completed with ${errorsCount} record error(s).`
-      : `Sync completed. Pulled ${ordersPulled} orders.`;
+    const message = ordersPulled === 0
+      ? 'Sync completed but no orders were found. Check raw_summary for payload keys and array path.'
+      : errorsCount
+        ? `Sync completed with ${errorsCount} record error(s). Pulled ${ordersPulled} orders.`
+        : `Sync completed. Pulled ${ordersPulled} orders.`;
 
     await query(
       'update tazworks_sync_runs set status=$1, completed_at=now(), orders_pulled=$2, applicants_upserted=$3, safety_reports_updated=$4, errors_count=$5, message=$6, raw_summary=$7 where id=$8',
-      [status, ordersPulled, applicantsUpserted, safetyReportsUpdated, errorsCount, message, JSON.stringify({ errors: errors.slice(0, 10) }), runId]
+      [
+        status,
+        ordersPulled,
+        applicantsUpserted,
+        safetyReportsUpdated,
+        errorsCount,
+        message,
+        JSON.stringify({
+          pages: pageSummaries,
+          uniqueOrderCount: ordersPulled,
+          errors: errors.slice(0, 10),
+        }),
+        runId,
+      ]
     );
 
     return json(res, 200, {
@@ -433,13 +547,23 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
       safetyReportsUpdated,
       errorsCount,
       message,
+      pages: pageSummaries,
     });
   } catch (error: any) {
     const safe = error?.message || 'The order connection is currently unavailable.';
 
     await query(
       'update tazworks_sync_runs set status=$1, completed_at=now(), errors_count=$2, message=$3, raw_summary=$4 where id=$5',
-      ['failed', errorsCount + 1, safe, JSON.stringify({ error: safe }), runId]
+      [
+        'failed',
+        errorsCount + 1,
+        safe,
+        JSON.stringify({
+          pages: pageSummaries,
+          errors: [safe, ...errors].slice(0, 10),
+        }),
+        runId,
+      ]
     );
 
     return json(res, error?.statusCode || 503, {
@@ -449,7 +573,15 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
     });
   }
 }
-// PHASE12A4_TAZWORKS_SYNC END
+
+async function tazworksSyncDebug(req: any, res: any, user: any) {
+  if (req.method !== 'GET') return json(res, 405, { status: 'error', message: 'Method not allowed' });
+  if (!requireAdmin(user, res)) return;
+
+  const result = await query('select id, status, message, raw_summary from tazworks_sync_runs order by started_at desc limit 1');
+  return json(res, 200, { status: 'ok', latest: result.rows[0] || null });
+}
+// PHASE12A5_TAZWORKS_SYNC END
 
 
 export default async function handler(req: any, res: any) {
@@ -469,6 +601,7 @@ export default async function handler(req: any, res: any) {
     if (route === 'change-password') return changePassword(req, res, user);
     if (route === 'tazworks-sync/run') return tazworksSyncRun(req, res, user);
     if (route === 'tazworks-sync/runs') return tazworksSyncRuns(req, res, user);
+    if (route === 'tazworks-sync/debug') return tazworksSyncDebug(req, res, user);
     if (route === 'system-check') return systemCheck(req, res, user);
     return json(res, 404, { status: 'error', message: `Route not found: ${route}` });
   } catch (error: any) {
