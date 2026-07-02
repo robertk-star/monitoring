@@ -1,7 +1,6 @@
 {
   "type": "module",
   "scripts": {
-    "prebuild": "node scripts/apply-phase12a.mjs",
     "build": "vite build",
     "dev": "vite --host 0.0.0.0",
     "start": "vite --host 0.0.0.0"
