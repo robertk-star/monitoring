@@ -1,6 +1,31 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>SaffHire Monitoring</title><link rel="stylesheet" href="/phase4.css" /></head>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SaffHire Monitoring</title>
+    <link rel="stylesheet" href="/phase4.css" />
+    <style>
+      /* Phase 12A-9: hide known phase cards immediately to stop flashing */
+      #phase5a-panel,
+      #phase6-panel,
+      #phase7-panel,
+      #phase7a-panel,
+      .phase5a-panel,
+      .phase6-panel,
+      .phase7-panel,
+      .phase7a-panel {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0 !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        overflow: hidden !important;
+      }
+    </style>
+  </head>
   <body>
     <div id="root"></div>
     <script>
@@ -18,6 +43,10 @@
         return window.__saffhireOriginalFetch(input, init);
       };
     </script>
+
+    <!-- No-flash cleanup must load before old phase scripts -->
+    <script src="/phase12a9-no-flash-safety-cleanup.js"></script>
+
     <script type="module" src="/src/main.jsx"></script>
     <script src="/phase4b.js"></script>
     <script src="/phase4c.js"></script>
@@ -34,6 +63,5 @@
     <script src="/phase12a-tazworks-sync.js"></script>
     <script src="/phase12a6-monitoring-alerts-fix.js"></script>
     <script src="/phase12a7-dropdown-only-green.js"></script>
-    <script src="/phase12a8-safety-card-cleanup.js"></script>
   </body>
 </html>
