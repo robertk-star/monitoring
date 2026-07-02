@@ -211,7 +211,7 @@ async function systemCheck(req: any, res: any, user: any) {
   return json(res, 200, { status: 'ok', checks });
 }
 
-// PHASE12A5_TAZWORKS_SYNC START
+// PHASE12A6_TAZWORKS_SYNC START
 function tazworksSyncEnv() {
   const baseUrl = String(process.env.TAZWORKS_PROXY_BASE_URL || '').replace(/\/+$/, '');
   const proxySecret = String(process.env.TAZWORKS_PROXY_SECRET || '');
@@ -489,7 +489,7 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
               String(order.fileNumber),
               String(order.applicantName || 'REVIEW NAME NEEDED'),
               tazworksDateOnly(order.orderedDate || order.createdDate),
-              'On',
+              'Off',
               String(order.orderStatus || ''),
               '',
             ]
@@ -533,6 +533,7 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
         JSON.stringify({
           pages: pageSummaries,
           uniqueOrderCount: ordersPulled,
+          defaultMonitoringForNewOrders: 'Off',
           errors: errors.slice(0, 10),
         }),
         runId,
@@ -581,7 +582,7 @@ async function tazworksSyncDebug(req: any, res: any, user: any) {
   const result = await query('select id, status, message, raw_summary from tazworks_sync_runs order by started_at desc limit 1');
   return json(res, 200, { status: 'ok', latest: result.rows[0] || null });
 }
-// PHASE12A5_TAZWORKS_SYNC END
+// PHASE12A6_TAZWORKS_SYNC END
 
 
 export default async function handler(req: any, res: any) {
