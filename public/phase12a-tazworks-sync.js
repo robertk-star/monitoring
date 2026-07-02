@@ -42,7 +42,7 @@
     const body = document.querySelector('#phase12a-runs tbody');
     if (!body) return;
     if (!runs || !runs.length) {
-      body.innerHTML = '<tr><td colspan="7" class="phase12a-empty">No sync runs yet.</td></tr>';
+      body.innerHTML = '<tr><td colspan="8" class="phase12a-empty">No sync runs yet.</td></tr>';
       return;
     }
     body.innerHTML = runs.map((run) => `
@@ -54,13 +54,21 @@
         <td>${escapeHtml(run.safety_reports_updated ?? run.safetyReportsUpdated ?? 0)}</td>
         <td>${escapeHtml(run.errors_count ?? run.errorsCount ?? 0)}</td>
         <td>${escapeHtml(run.message || '')}</td>
+        <td><button type="button" data-phase12a-summary='${escapeHtml(JSON.stringify(run.raw_summary || {}))}'>Summary</button></td>
       </tr>`).join('');
+  }
+
+  function renderSummary(summary) {
+    const box = document.getElementById('phase12a-summary');
+    if (!box) return;
+    box.innerHTML = '<h3>Latest raw sync summary</h3><pre>' + escapeHtml(JSON.stringify(summary || {}, null, 2).slice(0, 12000)) + '</pre>';
   }
 
   async function loadRuns() {
     try {
       const data = await api('tazworks-sync/runs');
       renderRuns(data.runs || []);
+      if (data.runs && data.runs[0]) renderSummary(data.runs[0].raw_summary || {});
     } catch (error) {
       renderRuns([]);
       toast(error.message || 'Could not load sync runs.', true);
@@ -72,8 +80,9 @@
     if (button) { button.disabled = true; button.textContent = 'Running Sync...'; }
     try {
       const data = await api('tazworks-sync/run', { method: 'POST', body: JSON.stringify({ manual: true }) });
-      toast(`Sync complete. Pulled ${data.ordersPulled || 0} orders.`);
+      toast(data.message || `Sync complete. Pulled ${data.ordersPulled || 0} orders.`);
       await loadRuns();
+      if (data.pages) renderSummary({ pages: data.pages, ordersPulled: data.ordersPulled });
     } catch (error) {
       toast(error.message || 'TazWorks sync failed.', true);
       await loadRuns();
@@ -90,18 +99,19 @@
     panel.className = 'card wide-card settings-card phase12a-panel';
     panel.innerHTML = `
       <h2>TazWorks Manual Sync</h2>
-      <p class="muted">Pulls recent read-only TazWorks orders through the SaffHire fixed-IP proxy and updates Monitoring records. Safety Performance reports are matched by file number when an existing report is found.</p>
-      <div class="phase12a-warning">Server-side only. Browser does not call TazWorks or the proxy directly. Client GUID and proxy secret stay in Vercel ENV.</div>
+      <p class="muted">Pulls recent read-only TazWorks orders through the SaffHire fixed-IP proxy. This version includes diagnostics so we can see whether the proxy returns orders and where the order array lives.</p>
+      <div class="phase12a-warning">Server-side only. Pulls pages 0–4 with size 10. Client GUID and proxy secret stay in Vercel ENV.</div>
       <div class="phase12a-actions">
         <button id="phase12a-run-sync" type="button" class="primary-inline">Run TazWorks Sync Now</button>
         <button id="phase12a-refresh-runs" type="button">Refresh Sync Log</button>
       </div>
       <div class="phase12a-table-wrap">
         <table id="phase12a-runs">
-          <thead><tr><th>Started</th><th>Status</th><th>Orders</th><th>Monitoring</th><th>Safety</th><th>Errors</th><th>Message</th></tr></thead>
-          <tbody><tr><td colspan="7" class="phase12a-empty">Loading sync runs...</td></tr></tbody>
+          <thead><tr><th>Started</th><th>Status</th><th>Orders</th><th>Monitoring</th><th>Safety</th><th>Errors</th><th>Message</th><th></th></tr></thead>
+          <tbody><tr><td colspan="8" class="phase12a-empty">Loading sync runs...</td></tr></tbody>
         </table>
-      </div>`;
+      </div>
+      <div id="phase12a-summary" class="phase12a-summary"></div>`;
     if (anchor) anchor.insertAdjacentElement('afterend', panel);
     else document.querySelector('.main-panel')?.appendChild(panel);
     document.getElementById('phase12a-run-sync')?.addEventListener('click', runSync);
@@ -117,17 +127,24 @@
       .phase12a-panel { border-left: 5px solid #16a34a; }
       .phase12a-warning { background: #ecfdf5; border: 1px solid #bbf7d0; color: #166534; border-radius: 12px; padding: 10px 12px; margin: 10px 0 14px; font-weight: 700; }
       .phase12a-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
-      .phase12a-actions button { border: 1px solid #16a34a; background: #f0fdf4; color: #166534; border-radius: 999px; padding: 8px 12px; font-size: 13px; font-weight: 900; }
+      .phase12a-actions button, #phase12a-runs button { border: 1px solid #16a34a; background: #f0fdf4; color: #166534; border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 900; }
       .phase12a-actions button:disabled { opacity: .65; cursor: wait; }
       .phase12a-table-wrap { overflow: auto; border: 1px solid #e5e7eb; border-radius: 14px; }
       #phase12a-runs { width: 100%; border-collapse: collapse; }
       #phase12a-runs th, #phase12a-runs td { padding: 9px 10px; border-bottom: 1px solid #e5e7eb; font-size: 13px; vertical-align: top; }
       #phase12a-runs th { background: #f8fafc; text-transform: uppercase; font-size: 12px; color: #475569; }
       .phase12a-empty { text-align: center; color: #64748b; padding: 22px !important; }
+      .phase12a-summary pre { max-height: 320px; overflow: auto; background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 12px; font-size: 12px; }
       .phase12a-toast { position: fixed; right: 18px; bottom: 18px; z-index: 10030; background: #111827; color: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 18px 45px rgba(15,23,42,.25); font-size: 14px; max-width: 460px; }
       .phase12a-toast.danger { background: #991b1b; }`;
     document.head.appendChild(style);
   }
+
+  document.addEventListener('click', function(event) {
+    const button = event.target && event.target.closest ? event.target.closest('[data-phase12a-summary]') : null;
+    if (!button) return;
+    try { renderSummary(JSON.parse(button.dataset.phase12aSummary || '{}')); } catch { renderSummary({}); }
+  });
 
   function refresh() { addStyles(); ensurePanel(); }
   setInterval(refresh, 1200);
