@@ -250,7 +250,6 @@ async function clientApplicantUpdate(req: any, res: any, user: any) {
   return json(res, 200, { status: 'ok', applicant: result.rows[0] });
 }
 
-
 async function clientDashboard(req: any, res: any, user: any) {
   if (req.method !== 'GET') return json(res, 405, { status: 'error', message: 'Method not allowed' });
   if (!requireCompanyScope(user, res)) return;
