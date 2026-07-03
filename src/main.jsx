@@ -338,6 +338,8 @@ function Layout({ user, children, page, setPage, onLogout }) {
     ['dashboard', 'Dashboard', Activity],
     ['monitoring', 'Monitoring', ClipboardCheck],
     ['safety', 'Safety Performance', Truck],
+    ['clientView', 'Client View', ClipboardCheck],
+    ['clientAdmin', 'Client Admin', UserCog],
     ['settings', 'Settings', Settings],
   ];
   return (
@@ -540,6 +542,267 @@ function Field({ label, children }) {
   return <label className="field"><span>{label}</span>{children}</label>;
 }
 
+
+function dateDisplay(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString();
+}
+
+function ClientMetric({ title, value }) {
+  return <div className="card metric"><div><p>{title}</p><strong>{value ?? 0}</strong></div><ClipboardCheck size={26} /></div>;
+}
+
+function ClientView({ company, companyId }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [savingAll, setSavingAll] = useState(false);
+  const [error, setError] = useState('');
+
+  async function load() {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await api(`/api/client-dashboard?companyId=${companyId}`);
+      setData(result);
+    } catch (err) {
+      setError(err.message || 'Could not load client view.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, [companyId]);
+
+  async function saveApplicant(id, patch) {
+    const result = await api(`/api/client-applicant?companyId=${companyId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ id, ...patch }),
+    });
+
+    setData((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        recentApplicants: (current.recentApplicants || []).map((row) => row.id === id ? result.applicant : row),
+      };
+    });
+
+    return result.applicant;
+  }
+
+  async function saveAllChanged() {
+    const rows = Array.from(document.querySelectorAll('[data-client-monitoring-row="dirty"]'));
+    if (!rows.length) {
+      alert('No changed monitoring records to save.');
+      return;
+    }
+
+    setSavingAll(true);
+    try {
+      for (const row of rows) {
+        const id = Number(row.getAttribute('data-applicant-id'));
+        const monitorStatus = row.querySelector('[data-field="monitorStatus"]')?.value || 'Off';
+        const notes = row.querySelector('[data-field="notes"]')?.value || '';
+        await saveApplicant(id, { monitorStatus, notes });
+        row.removeAttribute('data-client-monitoring-row');
+      }
+      await load();
+    } catch (err) {
+      alert(err.message || 'Could not save all changed records.');
+    } finally {
+      setSavingAll(false);
+    }
+  }
+
+  const applicantStats = data?.applicantStats || {};
+  const safetyStats = data?.safetyStats || {};
+  const recentApplicants = data?.recentApplicants || [];
+  const recentSafetyReports = data?.recentSafetyReports || [];
+
+  return (
+    <>
+      <Header title="Client View" subtitle={`${company?.name || data?.company?.name || 'Client'} · editable monitoring`} action={load} />
+      {error ? <section className="card error-box">{error}</section> : null}
+      {loading ? <section className="card">Loading client view...</section> : (
+        <>
+          <div className="grid cards">
+            <ClientMetric title="Total Records" value={applicantStats.total} />
+            <ClientMetric title="On Monitoring" value={applicantStats.on_monitoring} />
+            <ClientMetric title="Off Monitoring" value={applicantStats.off_monitoring} />
+            <ClientMetric title="Expired Medical" value={applicantStats.expired_medical} />
+            <ClientMetric title="Expiring 30 Days" value={applicantStats.expiring_30} />
+            <ClientMetric title="Blank Med Expire" value={applicantStats.blank_med_expire} />
+          </div>
+
+          <section className="card table-card">
+            <div className="table-title-row">
+              <div>
+                <h2>Monitoring Records</h2>
+                <p>Turn Monitoring On/Off, add notes, then save the row.</p>
+              </div>
+              <button className="primary-inline" onClick={saveAllChanged} disabled={savingAll}><Save size={16} /> {savingAll ? 'Saving...' : 'Save All Changed'}</button>
+            </div>
+            <table>
+              <thead><tr><th>File #</th><th>Name</th><th>Order Date</th><th>Monitoring</th><th>MVR Status</th><th>Med Expire</th><th>Notes</th><th></th></tr></thead>
+              <tbody>{recentApplicants.map((applicant) => <ClientMonitoringRow key={applicant.id} applicant={applicant} onSave={saveApplicant} />)}</tbody>
+            </table>
+            {!recentApplicants.length ? <div className="empty">No monitoring records found.</div> : null}
+          </section>
+
+          <section className="card wide-card">
+            <h2>Safety Performance Summary</h2>
+            <div className="status-list">
+              <span>Total Reports</span><b>{safetyStats.total || 0}</b>
+              <span>S1 Complete</span><b>{safetyStats.s1_complete || 0}</b>
+              <span>Employer Sent</span><b>{safetyStats.emp_sent || 0}</b>
+              <span>Employer Complete</span><b>{safetyStats.emp_complete || 0}</b>
+              <span>Completed</span><b>{safetyStats.completed || 0}</b>
+            </div>
+          </section>
+
+          <section className="card table-card">
+            <h2>Recent Safety Performance Reports</h2>
+            <table>
+              <thead><tr><th>File #</th><th>Applicant</th><th>Created</th><th>Status</th><th>Follow Up</th><th>Previous Employer</th></tr></thead>
+              <tbody>{recentSafetyReports.map((report) => <tr key={report.id}><td>{report.fileNumber}</td><td>{report.applicantName}</td><td>{dateDisplay(report.created)}</td><td>{report.status}</td><td>{report.followUpDate}</td><td>{report.prevEmployerName}</td></tr>)}</tbody>
+            </table>
+            {!recentSafetyReports.length ? <div className="empty">No safety reports found.</div> : null}
+          </section>
+        </>
+      )}
+    </>
+  );
+}
+
+function ClientMonitoringRow({ applicant, onSave }) {
+  const [draft, setDraft] = useState({ monitorStatus: applicant.monitorStatus || 'Off', notes: applicant.notes || '' });
+  const [saving, setSaving] = useState(false);
+  const dirty = draft.monitorStatus !== (applicant.monitorStatus || 'Off') || draft.notes !== (applicant.notes || '');
+
+  useEffect(() => setDraft({ monitorStatus: applicant.monitorStatus || 'Off', notes: applicant.notes || '' }), [applicant]);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await onSave(applicant.id, draft);
+    } catch (err) {
+      alert(err.message || 'Could not save monitoring record.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <tr data-applicant-id={applicant.id} data-client-monitoring-row={dirty ? 'dirty' : undefined} className={dirty ? 'dirty-row' : ''}>
+      <td><b>{applicant.fileNumber}</b></td>
+      <td>{applicant.name}</td>
+      <td>{dateDisplay(applicant.orderDate)}</td>
+      <td><select className={draft.monitorStatus === 'On' ? 'monitoring-on-select' : ''} value={draft.monitorStatus} onChange={(e) => setDraft({ ...draft, monitorStatus: e.target.value })} data-field="monitorStatus"><option>Off</option><option>On</option></select></td>
+      <td>{applicant.mvrStatus}</td>
+      <td>{applicant.medExpire || ''}</td>
+      <td><textarea rows={2} value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} data-field="notes" placeholder="Client notes" /></td>
+      <td><button className="icon-btn" disabled={!dirty || saving} onClick={save}><Save size={16} /> {saving ? 'Saving' : 'Save'}</button></td>
+    </tr>
+  );
+}
+
+function ClientAdmin({ company, companyId }) {
+  const [users, setUsers] = useState([]);
+  const [form, setForm] = useState({ displayName: '', username: '', password: '', role: 'client_user' });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  async function load() {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await api(`/api/client-users?companyId=${companyId}`);
+      setUsers(result.users || []);
+    } catch (err) {
+      setError(err.message || 'Could not load client users.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, [companyId]);
+
+  async function addUser(e) {
+    e.preventDefault();
+    try {
+      await api(`/api/client-users?companyId=${companyId}`, { method: 'POST', body: JSON.stringify(form) });
+      setForm({ displayName: '', username: '', password: '', role: 'client_user' });
+      await load();
+    } catch (err) {
+      alert(err.message || 'Could not add client user.');
+    }
+  }
+
+  async function updateUser(id, patch) {
+    try {
+      await api(`/api/client-users?companyId=${companyId}`, { method: 'PATCH', body: JSON.stringify({ id, ...patch }) });
+      await load();
+    } catch (err) {
+      alert(err.message || 'Could not save client user.');
+    }
+  }
+
+  async function deleteUser(id) {
+    if (!confirm('Delete this client user?')) return;
+    try {
+      await api(`/api/client-users?id=${id}&companyId=${companyId}`, { method: 'DELETE' });
+      await load();
+    } catch (err) {
+      alert(err.message || 'Could not delete client user.');
+    }
+  }
+
+  return (
+    <>
+      <Header title="Client Admin" subtitle={`${company?.name || 'Client'} · user management`} action={load} />
+      {error ? <section className="card error-box">{error}</section> : null}
+      <section className="card form-card">
+        <h2>Add Client User</h2>
+        <form className="form-grid four" onSubmit={addUser}>
+          <Field label="Display Name"><input value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} /></Field>
+          <Field label="Username / Email"><input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required /></Field>
+          <Field label="Temporary Password"><input value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={8} /></Field>
+          <Field label="Role"><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option value="client_user">Client User</option><option value="viewer">Viewer</option><option value="client_admin">Client Admin</option></select></Field>
+          <div className="form-actions"><button className="primary-inline"><Plus size={16} /> Add User</button></div>
+        </form>
+      </section>
+
+      <section className="card table-card">
+        <h2>Client Users</h2>
+        {loading ? <div className="empty">Loading users...</div> : (
+          <table>
+            <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Last Sign In</th><th></th></tr></thead>
+            <tbody>{users.map((user) => <ClientUserRow key={user.id} user={user} onUpdate={updateUser} onDelete={deleteUser} />)}</tbody>
+          </table>
+        )}
+      </section>
+    </>
+  );
+}
+
+function ClientUserRow({ user, onUpdate, onDelete }) {
+  const [draft, setDraft] = useState({ displayName: user.displayName || '', role: user.role || 'client_user', isActive: user.isActive !== false });
+  const dirty = draft.displayName !== (user.displayName || '') || draft.role !== (user.role || 'client_user') || draft.isActive !== (user.isActive !== false);
+
+  return (
+    <tr>
+      <td><input value={draft.displayName} onChange={(e) => setDraft({ ...draft, displayName: e.target.value })} /></td>
+      <td>{user.username}</td>
+      <td><select value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value })}><option value="client_admin">Client Admin</option><option value="client_user">Client User</option><option value="viewer">Viewer</option><option value="user">User</option></select></td>
+      <td><select value={draft.isActive ? 'true' : 'false'} onChange={(e) => setDraft({ ...draft, isActive: e.target.value === 'true' })}><option value="true">Active</option><option value="false">Inactive</option></select></td>
+      <td>{user.lastSignedIn ? new Date(user.lastSignedIn).toLocaleString() : ''}</td>
+      <td><button className="icon-btn" disabled={!dirty} onClick={() => onUpdate(user.id, draft)}><Save size={16} /></button><button className="icon-btn" onClick={() => { const password = prompt('New temporary password, at least 8 characters:'); if (password) onUpdate(user.id, { password }); }}><Pencil size={16} /></button><button className="icon-btn danger" onClick={() => onDelete(user.id)}><Trash2 size={16} /></button></td>
+    </tr>
+  );
+}
+
+
 function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -567,7 +830,7 @@ function App() {
   if (checking) return <div className="center-screen"><div className="spinner" /></div>;
   if (!user) return <Login onAuth={setUser} />;
 
-  return <Layout user={user} page={page} setPage={setPage} onLogout={logout}>{companies.length > 1 ? <div className="company-switcher"><span>Active company</span><select value={companyId} onChange={(e) => setCompanyId(Number(e.target.value))}>{companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div> : null}{page === 'dashboard' && <Dashboard company={company} applicants={applicants} reports={reports} refresh={loadData} />}{page === 'monitoring' && <Monitoring company={company} applicants={applicants} setApplicants={setApplicants} refresh={loadData} />}{page === 'safety' && <Safety company={company} reports={reports} setReports={setReports} refresh={loadData} companyId={companyId} />}{page === 'settings' && <SettingsManager user={user} company={company} companies={companies} setCompanies={setCompanies} companyId={companyId} refresh={loadData} setApplicants={setApplicants} />}</Layout>;
+  return <Layout user={user} page={page} setPage={setPage} onLogout={logout}>{companies.length > 1 ? <div className="company-switcher"><span>Active company</span><select value={companyId} onChange={(e) => setCompanyId(Number(e.target.value))}>{companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div> : null}{page === 'dashboard' && <Dashboard company={company} applicants={applicants} reports={reports} refresh={loadData} />}{page === 'monitoring' && <Monitoring company={company} applicants={applicants} setApplicants={setApplicants} refresh={loadData} />}{page === 'safety' && <Safety company={company} reports={reports} setReports={setReports} refresh={loadData} companyId={companyId} />}{page === 'clientView' && <ClientView company={company} companyId={companyId} />}{page === 'clientAdmin' && <ClientAdmin company={company} companyId={companyId} />}{page === 'settings' && <SettingsManager user={user} company={company} companies={companies} setCompanies={setCompanies} companyId={companyId} refresh={loadData} setApplicants={setApplicants} />}</Layout>;
 }
 
 createRoot(document.getElementById('root')).render(<App />);
