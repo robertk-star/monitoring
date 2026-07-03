@@ -14,3 +14,16 @@
   document.addEventListener('click',e=>{const b=e.target&&e.target.closest?e.target.closest('[data-sum]'):null;if(b){try{summary(JSON.parse(b.dataset.sum||'{}'))}catch{summary({})}}});
   function refresh(){styles();panel()}setInterval(refresh,1200);if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',refresh);else refresh();
 })();
+
+// PHASE12A20_SETTINGS_ONLY_TAIL
+(function () {
+  function text(el) { return (el && el.textContent ? el.textContent : '').trim(); }
+  function isSettings() { return Array.from(document.querySelectorAll('.page-header h1')).some((h) => text(h) === 'Settings'); }
+  function cleanup() {
+    if (isSettings()) return;
+    document.getElementById('phase12a-panel')?.remove();
+  }
+  setInterval(cleanup, 500);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', cleanup);
+  else cleanup();
+})();

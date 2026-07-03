@@ -15,3 +15,16 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addLink);
   else addLink();
 })();
+
+// PHASE12A20_SETTINGS_ONLY_TAIL
+(function () {
+  function text(el) { return (el && el.textContent ? el.textContent : '').trim(); }
+  function isSettings() { return Array.from(document.querySelectorAll('.page-header h1')).some((h) => text(h) === 'Settings'); }
+  function cleanup() {
+    if (isSettings()) return;
+    document.getElementById('phase12a17-mvr-test-link')?.remove();
+  }
+  setInterval(cleanup, 500);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', cleanup);
+  else cleanup();
+})();
