@@ -341,23 +341,43 @@ function cleanResultText(value: any) {
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
+function isIssueDateContext(context: string, dateValue: string) {
+  const lower = String(context || '').toLowerCase();
+  const dateIndex = lower.indexOf(String(dateValue || '').toLowerCase());
+  const beforeDate = dateIndex >= 0 ? lower.slice(Math.max(0, dateIndex - 120), dateIndex) : lower.slice(0, 220);
+
+  const issue = Math.max(beforeDate.lastIndexOf('issue date'), beforeDate.lastIndexOf('issued'));
+  const expire = Math.max(
+    beforeDate.lastIndexOf('expiration'),
+    beforeDate.lastIndexOf('expiry'),
+    beforeDate.lastIndexOf('expires'),
+    beforeDate.lastIndexOf('expire')
+  );
+
+  return issue >= 0 && issue > expire;
+}
+
 function findExpirationDateInText(text: string) {
   const datePattern = `([0-9]{4}[\\/\\-][0-9]{1,2}[\\/\\-][0-9]{1,2}|[0-9]{1,2}[\\/\\-][0-9]{1,2}[\\/\\-][0-9]{2,4})`;
+
   const patterns = [
     new RegExp(`(?:expiration|expiry|expires|expire)\\s*(?:date)?\\s*[:#\\-]?\\s*${datePattern}`, 'i'),
-    new RegExp(`(?:medical|med\\s*cert|certificate|dot\\s*medical)[\\s\\S]{0,250}?(?:expiration|expiry|expires|expire)\\s*(?:date)?\\s*[:#\\-]?\\s*${datePattern}`, 'i')
+    new RegExp(`(?:exp\\.?\\s*date|exp\\.?\\s*dt)\\s*[:#\\-]?\\s*${datePattern}`, 'i'),
+    new RegExp(`(?:medical|med\\s*cert|certificate|dot\\s*medical)[\\s\\S]{0,350}?(?:expiration|expiry|expires|expire)\\s*(?:date)?\\s*[:#\\-]?\\s*${datePattern}`, 'i'),
+    new RegExp(`(?:expiration|expiry|expires|expire)\\s*(?:date)?\\s*[:#\\-]?[\\s\\S]{0,80}?${datePattern}`, 'i')
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match?.[1]) {
-      const context = match[0].slice(0, 700);
-      const beforeDate = context.slice(0, Math.max(0, context.indexOf(match[1])));
-      if (/issue\s*date/i.test(beforeDate) && !/(expiration|expiry|expires|expire)/i.test(beforeDate)) continue;
+      const context = match[0].slice(0, 900);
+      if (isIssueDateContext(context, match[1])) continue;
       const d = dateFromText(match[1]);
       if (d) return { date: d, match: context };
     }
@@ -370,30 +390,20 @@ function findMedExpire(payload: any) {
   const text = cleanResultText(payload);
   if (!text) return null;
 
-  const sectionStarts: number[] = [];
-  const sectionRegex = /(certificate\s+information|medical\s+certificate|medical\s+certification|med\s*cert|dot\s*medical)/ig;
-  let sectionMatch: RegExpExecArray | null;
-  while ((sectionMatch = sectionRegex.exec(text)) !== null) sectionStarts.push(sectionMatch.index);
+  const sectionRegex = /(certificate\s+information|medical\s+certificate|medical\s+certification|med\s*cert|dot\s*medical|medical\s+examiner|medical\s+card)/ig;
+  const starts: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = sectionRegex.exec(text)) !== null) starts.push(m.index);
 
-  for (const start of sectionStarts) {
-    const section = text.slice(start, start + 1400);
+  for (const start of starts) {
+    const section = text.slice(start, start + 1800);
     const found = findExpirationDateInText(section);
     if (found?.date) return found;
   }
 
-  const fallbackPatterns = [
-    /(?:medical|med\s*cert|medical\s*certificate|dot\s*medical)[\s\S]{0,250}?(?:expiration|expiry|expires|expire)\s*(?:date)?\s*[:#\-]?\s*([0-9]{4}[\/\-][0-9]{1,2}[\/\-][0-9]{1,2}|[0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})/i,
-    /(?:expiration|expiry|expires|expire)\s*(?:date)?\s*[:#\-]?\s*([0-9]{4}[\/\-][0-9]{1,2}[\/\-][0-9]{1,2}|[0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})[\s\S]{0,250}?(?:medical|med\s*cert|medical\s*certificate|dot\s*medical)/i
-  ];
-
-  for (const pattern of fallbackPatterns) {
-    const match = text.match(pattern);
-    if (match?.[1]) {
-      const context = match[0].slice(0, 700);
-      if (/issue\s*date/i.test(context) && !/(expiration|expiry|expires|expire)/i.test(context)) continue;
-      const d = dateFromText(match[1]);
-      if (d) return { date: d, match: context };
-    }
+  const found = findExpirationDateInText(text);
+  if (found?.date && /(medical|med\s*cert|certificate|dot\s*medical|medical\s+card)/i.test(found.match)) {
+    return found;
   }
 
   return null;
@@ -456,11 +466,13 @@ async function pullMvrMed(orderGuid: string, order: any) {
     searchesPulled: 0,
     mvrSearches: 0,
     fallbackAllSearches: false,
+    scannedNonMvrAfterMvr: false,
     resultPulls: 0,
     noSearchGuid: 0,
     resultErrors: [],
     medExpire: null,
-    mvrSearchDetails: []
+    mvrSearchDetails: [],
+    scannedSearchDetails: []
   };
 
   if (!orderGuid) return summary;
@@ -472,20 +484,30 @@ async function pullMvrMed(orderGuid: string, order: any) {
   const mvrs = searches.filter(isMvr);
   summary.mvrSearches = mvrs.length;
 
-  // If TazWorks does not label the search as MVR, still scan all searches.
-  // File 6328 is an example: searchesPulled=1, mvrSearches=0, but it has a medical expiration.
-  const candidates = mvrs.length ? mvrs : searches;
-  summary.fallbackAllSearches = mvrs.length === 0 && searches.length > 0;
+  const nonMvrs = searches.filter((s: any) => !mvrs.includes(s));
+  const orderedCandidates = mvrs.length ? [...mvrs, ...nonMvrs] : searches;
 
-  summary.mvrSearchDetails = candidates.slice(0, 5).map((s: any) => ({
+  summary.fallbackAllSearches = mvrs.length === 0 && searches.length > 0;
+  summary.scannedNonMvrAfterMvr = mvrs.length > 0 && nonMvrs.length > 0;
+
+  summary.mvrSearchDetails = mvrs.slice(0, 5).map((s: any) => ({
     searchGuid: s.searchGuid,
     label: s.label,
     rawKeys: s.rawKeys,
     rawUuids: s.rawUuids,
-    fallbackCandidate: mvrs.length === 0
+    fallbackCandidate: false
   }));
 
-  for (const s of candidates) {
+  summary.scannedSearchDetails = orderedCandidates.slice(0, 8).map((s: any) => ({
+    searchGuid: s.searchGuid,
+    label: s.label,
+    rawKeys: s.rawKeys,
+    rawUuids: s.rawUuids,
+    isMvrCandidate: mvrs.includes(s),
+    fallbackCandidate: !mvrs.includes(s)
+  }));
+
+  for (const s of orderedCandidates) {
     if (!s.searchGuid) {
       summary.noSearchGuid++;
       continue;
@@ -501,10 +523,11 @@ async function pullMvrMed(orderGuid: string, order: any) {
         summary.searchGuid = s.searchGuid;
         summary.searchLabel = s.label;
         summary.rawMatch = found.match;
+        summary.usedFallbackSearch = !mvrs.includes(s);
         return summary;
       }
     } catch (err: any) {
-      summary.resultErrors.push({ searchGuid: s.searchGuid, message: String(err?.message || err) });
+      summary.resultErrors.push({ searchGuid: s.searchGuid, label: s.label, message: String(err?.message || err) });
     }
   }
 
