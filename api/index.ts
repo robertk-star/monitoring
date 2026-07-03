@@ -347,75 +347,85 @@ function cleanResultText(value: any) {
     .trim();
 }
 
-function isLicenseOnlyContext(context: string) {
-  const lower = String(context || '').toLowerCase();
-  const hasLicense = /license info|license type|license class|driver license|lic type|class description|commercial lic/.test(lower);
-  const hasMedical = /medical|med cert|medical cert|certificate information|medical examiner|dot medical|medical card/.test(lower);
-  return hasLicense && !hasMedical;
+function dateLabelPattern() {
+  return `([0-9]{4}[\\/\\-][0-9]{1,2}[\\/\\-][0-9]{1,2}|[0-9]{1,2}[\\/\\-][0-9]{1,2}[\\/\\-][0-9]{2,4})`;
 }
 
-function isIssueDateContext(context: string, dateValue: string) {
+function issueLabelIsCloser(context: string, dateValue: string) {
   const lower = String(context || '').toLowerCase();
   const dateIndex = lower.indexOf(String(dateValue || '').toLowerCase());
-  const beforeDate = dateIndex >= 0 ? lower.slice(Math.max(0, dateIndex - 150), dateIndex) : lower.slice(0, 260);
+  const beforeDate = dateIndex >= 0 ? lower.slice(Math.max(0, dateIndex - 180), dateIndex) : lower.slice(0, 320);
 
-  const issue = Math.max(beforeDate.lastIndexOf('issue date'), beforeDate.lastIndexOf('issued'), beforeDate.lastIndexOf('original issue'));
+  const issue = Math.max(
+    beforeDate.lastIndexOf('issue date'),
+    beforeDate.lastIndexOf('issued'),
+    beforeDate.lastIndexOf('original issue')
+  );
+
   const expire = Math.max(
     beforeDate.lastIndexOf('expiration'),
     beforeDate.lastIndexOf('expiry'),
     beforeDate.lastIndexOf('expires'),
     beforeDate.lastIndexOf('expire'),
-    beforeDate.lastIndexOf('exp date')
+    beforeDate.lastIndexOf('exp date'),
+    beforeDate.lastIndexOf('exp dt'),
+    beforeDate.lastIndexOf('valid until'),
+    beforeDate.lastIndexOf('cert exp'),
+    beforeDate.lastIndexOf('medical exp')
   );
 
   return issue >= 0 && issue > expire;
 }
 
-function dateCandidatePatterns() {
-  const date = `([0-9]{4}[\\/\\-][0-9]{1,2}[\\/\\-][0-9]{1,2}|[0-9]{1,2}[\\/\\-][0-9]{1,2}[\\/\\-][0-9]{2,4})`;
-  return [
-    new RegExp(`(?:expiration|expiry|expires|expire)\\s*(?:date)?\\s*[:#\\-]?\\s*${date}`, 'i'),
-    new RegExp(`(?:exp\\.?\\s*date|exp\\.?\\s*dt)\\s*[:#\\-]?\\s*${date}`, 'i'),
-    new RegExp(`(?:medical|med\\s*cert|certificate|dot\\s*medical|medical\\s*card)[\\s\\S]{0,400}?(?:expiration|expiry|expires|expire|exp\\.?\\s*date)\\s*(?:date)?\\s*[:#\\-]?\\s*${date}`, 'i'),
-    new RegExp(`(?:expiration|expiry|expires|expire|exp\\.?\\s*date)\\s*(?:date)?\\s*[:#\\-]?[\\s\\S]{0,100}?${date}`, 'i')
-  ];
-}
-
 function findExpirationDateInText(text: string) {
-  for (const pattern of dateCandidatePatterns()) {
+  const date = dateLabelPattern();
+  const patterns = [
+    new RegExp(`(?:medical\\s*)?(?:expiration|expiry|expires|expire)\\s*(?:date)?\\s*[:#\\-]?\\s*${date}`, 'i'),
+    new RegExp(`(?:med\\s*exp|medical\\s*exp|cert\\s*exp|exp\\.?\\s*date|exp\\.?\\s*dt)\\s*[:#\\-]?\\s*${date}`, 'i'),
+    new RegExp(`(?:valid\\s*until|valid\\s*thru|valid\\s*through)\\s*[:#\\-]?\\s*${date}`, 'i'),
+    new RegExp(`(?:medical|med\\s*cert|certificate|dot\\s*medical|medical\\s*card|medical\\s*info|medical\\s*information)[\\s\\S]{0,500}?(?:expiration|expiry|expires|expire|exp\\.?\\s*date|exp\\.?\\s*dt|valid\\s*until)\\s*(?:date)?\\s*[:#\\-]?\\s*${date}`, 'i')
+  ];
+
+  for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match?.[1]) {
-      const context = match[0].slice(0, 900);
-      if (isIssueDateContext(context, match[1])) continue;
-      if (isLicenseOnlyContext(context)) continue;
+      const context = match[0].slice(0, 1000);
+      if (issueLabelIsCloser(context, match[1])) continue;
       const d = dateFromText(match[1]);
       if (d) return { date: d, match: context };
     }
   }
+
   return null;
 }
 
-function findMedExpire(payload: any) {
-  const text = cleanResultText(payload);
-  if (!text) return null;
-
-  // Only trust sections that are medical/certificate-related.
-  // Do not use general License Info expiration dates.
-  const anchors = [
+function mvrMedicalAnchors() {
+  return [
+    'medical information',
+    'medical info',
+    'medical certificate information',
     'certificate information',
     'medical certificate',
     'medical certification',
-    'med cert',
-    'dot medical',
     'medical examiner',
     'medical card',
-    'medical status'
+    'medical status',
+    'medical expiration',
+    'med cert',
+    'med info',
+    'dot medical',
+    'dot med',
+    'cdl medical',
+    'self certification',
+    'self-certification'
   ];
+}
 
+function findMedicalSections(text: string) {
   const lower = text.toLowerCase();
   const starts: number[] = [];
 
-  for (const anchor of anchors) {
+  for (const anchor of mvrMedicalAnchors()) {
     let index = lower.indexOf(anchor);
     while (index >= 0) {
       starts.push(index);
@@ -423,21 +433,59 @@ function findMedExpire(payload: any) {
     }
   }
 
-  starts.sort((a, b) => a - b);
+  return Array.from(new Set(starts)).sort((a, b) => a - b);
+}
+
+function findMedExpire(payload: any) {
+  const text = cleanResultText(payload);
+  if (!text) return null;
+
+  // New rule:
+  // Medical information may appear inside the MVR License Info result.
+  // We therefore scan medical subsections inside the full MVR/license text.
+  // We still do NOT use the regular driver license expiration date.
+  const starts = findMedicalSections(text);
 
   for (const start of starts) {
-    const section = text.slice(start, start + 2000);
+    const section = text.slice(start, start + 2400);
     const found = findExpirationDateInText(section);
-    if (found?.date) return found;
+    if (found?.date) {
+      return {
+        date: found.date,
+        match: found.match,
+        extractor: 'mvr-medical-subsection'
+      };
+    }
   }
 
-  // Fallback only when the matched context itself contains medical/certificate language.
+  // Secondary fallback:
+  // If the matched expiration text itself contains medical/certificate wording,
+  // accept it. This still avoids plain License Info expiration.
   const found = findExpirationDateInText(text);
-  if (found?.date && /(medical|med\s*cert|certificate information|medical\s*certificate|dot\s*medical|medical card|medical examiner)/i.test(found.match)) {
-    return found;
+  if (found?.date && /(medical|med\s*cert|med info|certificate information|medical\s*certificate|medical\s*information|dot\s*medical|medical card|medical examiner|medical status|cdl medical|self certification|self-certification)/i.test(found.match)) {
+    return {
+      date: found.date,
+      match: found.match,
+      extractor: 'medical-context-fallback'
+    };
   }
 
   return null;
+}
+
+function mvrMedicalPreview(payload: any) {
+  const text = cleanResultText(payload);
+  const starts = findMedicalSections(text);
+  if (starts.length) {
+    const start = starts[0];
+    return text.slice(Math.max(0, start - 120), start + 1400);
+  }
+
+  const lower = text.toLowerCase();
+  const licenseIndex = lower.indexOf('license info');
+  if (licenseIndex >= 0) return text.slice(licenseIndex, licenseIndex + 1800);
+
+  return text.slice(0, 1200);
 }
 
 function orderFrom(row: any) {
@@ -491,17 +539,9 @@ async function proxyGet(proxyPath: string) {
 
 
 function certPreview(payload: any) {
-  const text = cleanResultText(payload);
-  if (!text) return '';
-  const lower = text.toLowerCase();
-  const anchors = ['certificate information', 'medical certificate', 'medical certification', 'med cert', 'dot medical', 'medical card', 'expiration date', 'expires', 'expiry'];
-  let idx = -1;
-  for (const anchor of anchors) {
-    idx = lower.indexOf(anchor);
-    if (idx >= 0) break;
-  }
-  if (idx < 0) return text.slice(0, 700);
-  return text.slice(Math.max(0, idx - 160), idx + 900);
+  const preview = mvrMedicalPreview(payload);
+  if (preview) return preview.slice(0, 1400);
+  return '';
 }
 
 async function tryResultVariant(orderGuid: string, searchGuid: string, resultType: string | null) {
@@ -700,18 +740,19 @@ function diagnosticDatesFromText(text: string) {
   const datePattern = /([0-9]{4}[\/\-][0-9]{1,2}[\/\-][0-9]{1,2}|[0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})/g;
   const out: any[] = [];
   let match: RegExpExecArray | null;
-  while ((match = datePattern.exec(clean)) !== null && out.length < 50) {
-    const start = Math.max(0, match.index - 140);
-    const end = Math.min(clean.length, match.index + match[0].length + 140);
+  while ((match = datePattern.exec(clean)) !== null && out.length < 75) {
+    const start = Math.max(0, match.index - 180);
+    const end = Math.min(clean.length, match.index + match[0].length + 180);
     const context = clean.slice(start, end);
     out.push({
       dateText: match[1],
       normalized: dateFromText(match[1]),
       context,
-      looksLikeMedical: /(medical|med\s*cert|certificate information|medical\s*certificate|dot\s*medical|medical card|medical examiner)/i.test(context),
+      looksLikeMedical: /(medical|med\s*cert|med info|certificate information|medical\s*certificate|medical\s*information|dot\s*medical|medical card|medical examiner|medical status|cdl medical|self certification|self-certification)/i.test(context),
       looksLikeLicense: /(license info|license type|driver license|class description|commercial lic|lic type)/i.test(context),
-      hasExpirationLabel: /(expiration|expiry|expires|expire|exp\.?\s*date)/i.test(context),
+      hasExpirationLabel: /(expiration|expiry|expires|expire|exp\.?\s*date|valid until|cert exp|medical exp)/i.test(context),
       hasIssueLabel: /(issue date|issued|original issue)/i.test(context),
+      wouldBeRejectedAsIssueDate: issueLabelIsCloser(context, match[1])
     });
   }
   return out;
