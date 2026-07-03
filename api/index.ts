@@ -458,6 +458,43 @@ async function proxyGet(proxyPath: string) {
   return payload;
 }
 
+
+function certPreview(payload: any) {
+  const text = cleanResultText(payload);
+  if (!text) return '';
+  const lower = text.toLowerCase();
+  const anchors = ['certificate information', 'medical certificate', 'medical certification', 'med cert', 'dot medical', 'medical card', 'expiration date', 'expires', 'expiry'];
+  let idx = -1;
+  for (const anchor of anchors) {
+    idx = lower.indexOf(anchor);
+    if (idx >= 0) break;
+  }
+  if (idx < 0) return text.slice(0, 700);
+  return text.slice(Math.max(0, idx - 160), idx + 900);
+}
+
+async function tryResultVariant(orderGuid: string, searchGuid: string, resultType: string | null) {
+  const e = tazEnv();
+  const encodedOrder = encodeURIComponent(orderGuid);
+  const encodedSearch = encodeURIComponent(searchGuid);
+  const base = `/tazworks/orders/${encodedOrder}/searches/${encodedSearch}/results`;
+  const path = resultType
+    ? `${base}?resultType=${encodeURIComponent(resultType)}&clientGuid=${encodeURIComponent(e.clientGuid)}`
+    : `${base}?clientGuid=${encodeURIComponent(e.clientGuid)}`;
+  return proxyGet(path);
+}
+
+async function tryOrderLevelVariant(orderGuid: string, resultType: string | null) {
+  const e = tazEnv();
+  const encodedOrder = encodeURIComponent(orderGuid);
+  const base = `/tazworks/orders/${encodedOrder}/results`;
+  const path = resultType
+    ? `${base}?resultType=${encodeURIComponent(resultType)}&clientGuid=${encodeURIComponent(e.clientGuid)}`
+    : `${base}?clientGuid=${encodeURIComponent(e.clientGuid)}`;
+  return proxyGet(path);
+}
+
+
 async function pullMvrMed(orderGuid: string, order: any) {
   const e = tazEnv();
   const summary: any = {
@@ -470,15 +507,18 @@ async function pullMvrMed(orderGuid: string, order: any) {
     resultPulls: 0,
     noSearchGuid: 0,
     resultErrors: [],
+    resultVariantsTried: [],
+    orderLevelResultTries: [],
     medExpire: null,
     mvrSearchDetails: [],
-    scannedSearchDetails: []
+    scannedSearchDetails: [],
+    certificatePreview: ''
   };
 
   if (!orderGuid) return summary;
 
-  const payload = await proxyGet(`/tazworks/orders/${encodeURIComponent(orderGuid)}/searches?clientGuid=${encodeURIComponent(e.clientGuid)}`);
-  const searches = arr(payload, 'search').map((row: any) => searchFrom(row, orderGuid));
+  const searchesPayload = await proxyGet(`/tazworks/orders/${encodeURIComponent(orderGuid)}/searches?clientGuid=${encodeURIComponent(e.clientGuid)}`);
+  const searches = arr(searchesPayload, 'search').map((row: any) => searchFrom(row, orderGuid));
   summary.searchesPulled = searches.length;
 
   const mvrs = searches.filter(isMvr);
@@ -507,27 +547,79 @@ async function pullMvrMed(orderGuid: string, order: any) {
     fallbackCandidate: !mvrs.includes(s)
   }));
 
+  const resultTypes: Array<string | null> = ['EDITOR', null, 'CLIENT', 'HTML', 'RAW', 'JSON', 'FULL'];
+
   for (const s of orderedCandidates) {
     if (!s.searchGuid) {
       summary.noSearchGuid++;
       continue;
     }
 
+    for (const resultType of resultTypes) {
+      try {
+        summary.resultPulls++;
+        summary.resultVariantsTried.push({ searchGuid: s.searchGuid, label: s.label, resultType: resultType || 'none' });
+
+        const result = await tryResultVariant(orderGuid, s.searchGuid, resultType);
+        const found = findMedExpire(result);
+
+        if (!summary.certificatePreview) {
+          const preview = certPreview(result);
+          if (preview && /(certificate|medical|expire|expiration|expiry)/i.test(preview)) {
+            summary.certificatePreview = preview.slice(0, 1000);
+          }
+        }
+
+        if (found?.date) {
+          summary.medExpire = found.date;
+          summary.searchGuid = s.searchGuid;
+          summary.searchLabel = s.label;
+          summary.resultTypeUsed = resultType || 'none';
+          summary.rawMatch = found.match;
+          summary.usedFallbackSearch = !mvrs.includes(s);
+          return summary;
+        }
+      } catch (err: any) {
+        summary.resultErrors.push({
+          searchGuid: s.searchGuid,
+          label: s.label,
+          resultType: resultType || 'none',
+          message: String(err?.message || err)
+        });
+      }
+    }
+  }
+
+  // Last fallback: some proxy/API implementations expose order-level results.
+  for (const resultType of resultTypes) {
     try {
-      summary.resultPulls++;
-      const result = await proxyGet(`/tazworks/orders/${encodeURIComponent(orderGuid)}/searches/${encodeURIComponent(s.searchGuid)}/results?resultType=EDITOR&clientGuid=${encodeURIComponent(e.clientGuid)}`);
+      summary.orderLevelResultTries.push({ resultType: resultType || 'none' });
+      const result = await tryOrderLevelVariant(orderGuid, resultType);
       const found = findMedExpire(result);
+
+      if (!summary.certificatePreview) {
+        const preview = certPreview(result);
+        if (preview && /(certificate|medical|expire|expiration|expiry)/i.test(preview)) {
+          summary.certificatePreview = preview.slice(0, 1000);
+        }
+      }
 
       if (found?.date) {
         summary.medExpire = found.date;
-        summary.searchGuid = s.searchGuid;
-        summary.searchLabel = s.label;
+        summary.searchGuid = '';
+        summary.searchLabel = 'order-level-result';
+        summary.resultTypeUsed = resultType || 'none';
         summary.rawMatch = found.match;
-        summary.usedFallbackSearch = !mvrs.includes(s);
+        summary.usedOrderLevelResult = true;
         return summary;
       }
     } catch (err: any) {
-      summary.resultErrors.push({ searchGuid: s.searchGuid, label: s.label, message: String(err?.message || err) });
+      summary.resultErrors.push({
+        searchGuid: '',
+        label: 'order-level-result',
+        resultType: resultType || 'none',
+        message: String(err?.message || err)
+      });
     }
   }
 
