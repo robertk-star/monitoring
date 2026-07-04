@@ -1456,26 +1456,49 @@ function monitoringExportValueAfterLabels(text: string, labels: string[], maxLen
   const source = String(text || '');
   if (!source) return '';
 
+  // PHASE12A61: TazWorks data can be flattened together like:
+  // LicenseNumber173221566LicenseStateCOFullName...
+  // Stop extracted values at the next known field label.
+  const nextFieldLabels = [
+    'LicenseState', 'License State', 'DL State', 'State',
+    'FullName', 'Full Name', 'FirstName', 'First Name', 'MiddleName', 'Middle Name', 'LastName', 'Last Name',
+    'DOB', 'DateOfBirth', 'Date of Birth', 'BirthDate', 'Birth Date',
+    'Address', 'Street', 'City', 'Zip',
+    'LicenseNumber', 'License Number', 'DriverLicenseNumber', 'Driver License Number', 'DLNumber', 'DL Number',
+    'LicenseClass', 'License Class', 'Class',
+    'LicenseStatus', 'License Status', 'Status',
+    'IssueDate', 'Issue Date', 'ExpirationDate', 'Expiration Date', 'ExpireDate', 'Expire Date',
+    'Restrictions', 'Endorsements', 'Sex', 'Gender', 'Height', 'Weight', 'EyeColor', 'HairColor'
+  ];
+
+  function cleanExtracted(rawValue: string) {
+    let value = String(rawValue || '');
+
+    for (const nextLabel of nextFieldLabels) {
+      const idx = value.toLowerCase().indexOf(nextLabel.toLowerCase());
+      if (idx > 0) value = value.slice(0, idx);
+    }
+
+    return value
+      .replace(/\s{2,}/g, ' ')
+      .replace(/\b(Date|Class|Type|Status|Restrictions|Endorsements|Expiration|Issue)\\b.*$/i, '')
+      .trim();
+  }
+
   for (const label of labels) {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // Prefer normal line-separated values if available.
+    // Normal label/value extraction. Stop at line breaks first.
     let match = source.match(new RegExp(`${escaped}\\s*[:#\\-]?\\s*([^\\n\\r|;]{1,${maxLength}})`, 'i'));
     if (match?.[1]) {
-      const value = match[1]
-        .replace(/\s{2,}/g, ' ')
-        .replace(/\b(Date|Class|Type|Status|Restrictions|Endorsements|Expiration|Issue)\\b.*$/i, '')
-        .trim();
+      const value = cleanExtracted(match[1]);
       if (value) return value;
     }
 
-    // Fallback for flattened JSON/text.
+    // Flattened JSON/text extraction.
     match = source.match(new RegExp(`${escaped}\\s*[:#\\-]?\\s*([A-Za-z0-9][A-Za-z0-9\\-\\/. ]{0,${maxLength}})`, 'i'));
     if (match?.[1]) {
-      const value = match[1]
-        .replace(/\s{2,}/g, ' ')
-        .replace(/\b(Date|Class|Type|Status|Restrictions|Endorsements|Expiration|Issue)\\b.*$/i, '')
-        .trim();
+      const value = cleanExtracted(match[1]);
       if (value) return value;
     }
   }
