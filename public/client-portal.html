@@ -398,4 +398,67 @@
 })();
 </script>
 
+
+<script>
+// Phase 12A-40: Client completed Safety Performance PDF download
+(function(){
+  function text(el){return(el&&el.textContent?el.textContent:'').trim()}
+  function activePage(){const b=[...document.querySelectorAll('nav button')].find(x=>x.classList.contains('active'));return b?b.dataset.p:''}
+  function isSafety(){return activePage()==='safe'||text(document.querySelector('.head h2'))==='Safety Performance'}
+  function getSafetyTable(){
+    if(!isSafety())return null;
+    return [...document.querySelectorAll('table')].find(t=>{
+      const h=[...t.querySelectorAll('thead th')].map(th=>text(th).trim().toLowerCase());
+      return h.includes('file #')&&h.includes('applicant')&&h.includes('status');
+    })||null;
+  }
+  function enhance(){
+    const table=getSafetyTable();
+    if(!table||table.dataset.phase12a40Pdf==='1')return;
+
+    const headerRow=table.querySelector('thead tr');
+    if(headerRow){
+      const th=document.createElement('th');
+      th.textContent='Completed PDF';
+      headerRow.appendChild(th);
+    }
+
+    [...table.querySelectorAll('tbody tr')].forEach(row=>{
+      const cells=row.children;
+      const fileNumber=text(cells[0]);
+      const status=text(cells[3]);
+      const td=document.createElement('td');
+
+      if(status==='Completed'){
+        const a=document.createElement('a');
+        a.href='/api/index?path='+encodeURIComponent('client-safety-pdf')+'&fileNumber='+encodeURIComponent(fileNumber);
+        a.className='btn client-pdf-download';
+        a.textContent='Download PDF';
+        a.target='_blank';
+        a.rel='noopener';
+        td.appendChild(a);
+      } else {
+        const span=document.createElement('span');
+        span.className='client-pdf-not-ready';
+        span.textContent='Available when Completed';
+        td.appendChild(span);
+      }
+
+      row.appendChild(td);
+    });
+
+    table.dataset.phase12a40Pdf='1';
+  }
+  function styles(){
+    if(document.getElementById('phase12a40-pdf-style'))return;
+    const s=document.createElement('style');
+    s.id='phase12a40-pdf-style';
+    s.textContent='.client-pdf-download{white-space:nowrap;text-decoration:none}.client-pdf-not-ready{color:#64748b;font-weight:800;font-size:12px;white-space:nowrap}';
+    document.head.appendChild(s);
+  }
+  function boot(){styles();enhance();setInterval(enhance,800)}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
+})();
+</script>
+
 </body></html>
