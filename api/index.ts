@@ -1,6 +1,9 @@
 import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import { jwtVerify, SignJWT } from 'jose';
+import { PDFDocument } from 'pdf-lib';
+import fs from 'fs';
+import path from 'path';
 
 const { Pool } = pg;
 let pool: any;
@@ -413,6 +416,167 @@ async function clientUsers(req: any, res: any, user: any) {
 
   return json(res, 405, { status: 'error', message: 'Method not allowed' });
 }
+
+
+// PHASE12A40_CLIENT_COMPLETED_SAFETY_PDF START
+function pdfClean(value: any) { return String(value ?? '').trim(); }
+function pdfSame(value: any, expected: string) { return pdfClean(value).toLowerCase() === expected.toLowerCase(); }
+function pdfShortDate(value: any) { return pdfClean(value).slice(0, 10); }
+function pdfSplitText(value: any, maxLen = 82, maxLines = 4) {
+  const text = pdfClean(value).replace(/\s+/g, ' ');
+  const lines: string[] = [];
+  let current = '';
+  for (const word of text.split(' ')) {
+    if (!word) continue;
+    if ((current + ' ' + word).trim().length > maxLen) {
+      lines.push(current.trim());
+      current = word;
+      if (lines.length >= maxLines) break;
+    } else {
+      current = (current + ' ' + word).trim();
+    }
+  }
+  if (current && lines.length < maxLines) lines.push(current.trim());
+  while (lines.length < maxLines) lines.push('');
+  return lines;
+}
+function pdfSetText(form: any, name: string, value: any) {
+  try { form.getTextField(name).setText(pdfClean(value)); } catch {}
+}
+function pdfCheck(form: any, name: string, shouldCheck: any) {
+  try {
+    const cb = form.getCheckBox(name);
+    if (shouldCheck) cb.check(); else cb.uncheck();
+  } catch {}
+}
+function pdfSetAccidentRows(form: any, report: any) {
+  pdfSetText(form, 'Date_4', report.accidentDate1);
+  pdfSetText(form, 'Location 1', report.accidentLocation1);
+  pdfSetText(form, 'No of Injuries No of Fatalities', report.accidentInjuries1);
+  pdfSetText(form, '1_2', report.accidentFatalities1);
+  pdfSetText(form, 'Hazmat Spill 1', report.accidentHazmat1);
+  pdfSetText(form, '2', report.accidentDate2);
+  pdfSetText(form, 'Location 2', report.accidentLocation2);
+  pdfSetText(form, '1', report.accidentInjuries2);
+  pdfSetText(form, '2_3', report.accidentFatalities2);
+  pdfSetText(form, 'Hazmat Spill 2', report.accidentHazmat2);
+  pdfSetText(form, '3', report.accidentDate3);
+  pdfSetText(form, 'Location 3', report.accidentLocation3);
+  pdfSetText(form, '2_2', report.accidentInjuries3);
+  pdfSetText(form, '3_2', report.accidentFatalities3);
+  pdfSetText(form, 'Hazmat Spill 3', report.accidentHazmat3);
+  const lines = pdfSplitText(report.otherAccidents, 88, 4);
+  pdfSetText(form, 'Please provide information concerning any other commercial motor vehicle accidents involving the applicant that were reported', lines[0]);
+  pdfSetText(form, 'to government agencies or insurers or retained under internal company policies 1', lines[1]);
+  pdfSetText(form, 'to government agencies or insurers or retained under internal company policies 2', lines[2]);
+  pdfSetText(form, 'to government agencies or insurers or retained under internal company policies 3', lines[3]);
+}
+async function buildCompletedSafetyPdf(report: any) {
+  const templatePath = path.join(process.cwd(), 'public', 'fmcsa-safety-performance-template.pdf');
+  if (!fs.existsSync(templatePath)) throw new Error('FMCSA PDF template is missing from public/fmcsa-safety-performance-template.pdf');
+  const templateBytes = fs.readFileSync(templatePath);
+  const pdfDoc = await PDFDocument.load(templateBytes);
+  const form = pdfDoc.getForm();
+
+  pdfSetText(form, 'I Print Name', report.applicantName);
+  pdfSetText(form, 'Previous Employer 1', report.prevEmployerName);
+  pdfSetText(form, 'Previous Employer 2', report.prevEmployerStreet);
+  pdfSetText(form, 'Email', report.prevEmployerEmail);
+  pdfSetText(form, 'Telephone', report.prevEmployerPhone);
+  pdfSetText(form, 'City State Zip', report.prevEmployerCityStateZip);
+  pdfSetText(form, 'Fax No', report.prevEmployerFax);
+  pdfSetText(form, 'records within the previous 3 years from', pdfShortDate(report.created));
+  pdfSetText(form, 'Prospective Employer 1', report.employerName || 'Driver Pipeline');
+  pdfSetText(form, 'Prospective Employer 2', report.employerAttention);
+  pdfSetText(form, 'Telephone_2', report.employerPhone);
+  pdfSetText(form, 'Prospective Employer 3', report.employerStreet);
+  pdfSetText(form, 'City State Zip_2', report.employerCityStateZip);
+  pdfSetText(form, 'Prospective employers confidential fax number', report.confFax || report.employerFax);
+  pdfSetText(form, 'Prospective employers confidential email address', report.confEmail || report.employerEmail);
+  pdfSetText(form, 'Date', pdfShortDate(report.created));
+
+  pdfCheck(form, 'The applicant named above was or is employed or used by us Yes', pdfSame(report.employedByCompany, 'Yes'));
+  pdfSetText(form, 'Employed as job title', report.jobTitle);
+  pdfSetText(form, 'from my', report.fromDate);
+  pdfSetText(form, 'to my', report.toDate);
+  pdfCheck(form, 'Did heshe drive a motor vehicle for you  Yes', pdfSame(report.droveMotorVehicle, 'Yes'));
+  pdfCheck(form, 'No_2', pdfSame(report.droveMotorVehicle, 'No'));
+  pdfCheck(form, 'Straight Truck', report.vehicleStraightTruck);
+  pdfCheck(form, 'TractorSemitrailer', report.vehicleTractorSemitrailer);
+  pdfCheck(form, 'Bus', report.vehicleBus);
+  pdfCheck(form, 'Cargo Tank', report.vehicleCargoTank);
+  pdfCheck(form, 'DoublesTriples', report.vehicleDoublesTriples);
+  pdfSetText(form, 'Other Specify', report.vehicleOther ? 'Other' : '');
+  pdfSetText(form, 'Completed by', report.infoReceivedFrom);
+  pdfSetText(form, 'Company 1', report.prevEmployerName);
+  pdfSetText(form, 'Company 2', report.prevEmployerStreet);
+  pdfSetText(form, 'City State Zip_3', report.prevEmployerCityStateZip);
+  pdfSetText(form, 'Telephone_3', report.prevEmployerPhone);
+  pdfSetText(form, 'Date_2', report.infoReceivedDate || pdfShortDate(report.created));
+
+  const noSafetyHistory = pdfSame(report.accidentHistory, 'No accidents reported') && !report.dotAlcoholTestPositive && !report.dotDrugTestPositive && !report.dotRefusedTest && !report.dotOtherViolations;
+  pdfCheck(form, 'If there is no safety performance history to report check here', noSafetyHistory);
+
+  pdfSetText(form, 'Employee Name', report.applicantName);
+  pdfSetText(form, 'Date_3', report.infoReceivedDate || pdfShortDate(report.created));
+  pdfCheck(form, '3 years prior to the application date shown on SIDE 1 or check here', pdfSame(report.accidentHistory, 'No accidents reported'));
+  pdfSetAccidentRows(form, report);
+
+  const anyDotViolation = Boolean(report.dotAlcoholTestPositive || report.dotDrugTestPositive || report.dotRefusedTest || report.dotOtherViolations);
+  pdfCheck(form, 'Yes', anyDotViolation);
+  pdfSetText(form, 'to', report.fromDate);
+  pdfSetText(form, 'undefined', report.toDate);
+
+  pdfCheck(form, 'Check Box3', true);
+  pdfSetText(form, 'This form was check one', 'Emailed to previous employer');
+  pdfSetText(form, 'undefined_7', report.infoReceivedFrom);
+  pdfSetText(form, 'Date_5', report.infoReceivedDate || pdfShortDate(report.created));
+  pdfSetText(form, 'Subsequent attempts to contact previous employer 39123c1 1', pdfClean(report.followUpDate) ? `Follow-up date: ${report.followUpDate}` : '');
+
+  pdfSetText(form, 'Information received from', report.infoReceivedFrom);
+  pdfCheck(form, 'Check Box7', true);
+  pdfSetText(form, 'Recorded by', report.employerName || 'SaffHire');
+  pdfSetText(form, 'undefined_8', report.infoReceivedDate || pdfShortDate(report.created));
+
+  form.flatten();
+  return await pdfDoc.save();
+}
+async function clientSafetyPdf(req: any, res: any, user: any) {
+  if (req.method !== 'GET' && req.method !== 'POST') return json(res, 405, { status: 'error', message: 'Method not allowed' });
+  if (!requireCompanyScope(user, res)) return;
+
+  const companyId = requestedCompanyId(req, user);
+  const url = new URL(req.url || '/', 'https://local.test');
+  let id = Number(url.searchParams.get('id') || 0);
+  let fileNumber = String(url.searchParams.get('fileNumber') || '').trim();
+
+  if (req.method === 'POST') {
+    const body = await readBody(req);
+    id = Number(body.id || id || 0);
+    fileNumber = String(body.fileNumber || fileNumber || '').trim();
+  }
+
+  let result;
+  if (id) {
+    result = await query('select * from safety_reports where id=$1 and "companyId"=$2 limit 1', [id, companyId]);
+  } else if (fileNumber) {
+    result = await query('select * from safety_reports where "companyId"=$1 and "fileNumber"=$2 order by id desc limit 1', [companyId, fileNumber]);
+  } else {
+    return json(res, 400, { status: 'error', message: 'Report id or file number is required' });
+  }
+
+  const report = result.rows[0];
+  if (!report) return json(res, 404, { status: 'error', message: 'Safety report not found for this client' });
+  if (String(report.status || '') !== 'Completed') return json(res, 400, { status: 'error', message: 'Completed PDF is available only when the Safety Performance report status is Completed' });
+
+  const bytes = await buildCompletedSafetyPdf(report);
+  const safeFile = String(report.fileNumber || report.id || 'safety-performance').replace(/[^0-9A-Za-z_-]/g, '') || 'safety-performance';
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="completed-safety-performance-${safeFile}.pdf"`);
+  res.end(Buffer.from(bytes));
+}
+// PHASE12A40_CLIENT_COMPLETED_SAFETY_PDF END
 
 async function systemCheck(req: any, res: any, user: any) {
   if (req.method !== 'GET') return json(res, 405, { status: 'error', message: 'Method not allowed' });
@@ -1288,6 +1452,7 @@ export default async function handler(req: any, res: any) {
     if (route === 'client-applicant') return clientApplicantUpdate(req, res, user);
     if (route === 'client-dashboard') return clientDashboard(req, res, user);
     if (route === 'client-users') return clientUsers(req, res, user);
+    if (route === 'client-safety-pdf') return clientSafetyPdf(req, res, user);
     if (route === 'system-check') return systemCheck(req, res, user);
     return json(res, 404, { status: 'error', message: `Route not found: ${route}` });
   } catch (error: any) {
