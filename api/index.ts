@@ -1,7 +1,7 @@
 import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import { jwtVerify, SignJWT } from 'jose';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import fs from 'fs';
 import path from 'path';
 
@@ -1427,6 +1427,378 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
     return json(res, error?.statusCode || 503, { status: 'error', message: safe, runId });
   }
 }
+
+// PHASE12A52_ADMIN_INVOICES START
+function invoiceDateOnly(value: any) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString().slice(0, 10);
+}
+function invoiceMonthStart(value?: any) {
+  const raw = String(value || '').trim();
+  const d = raw ? new Date(raw.length === 7 ? `${raw}-01T00:00:00Z` : raw) : new Date();
+  if (Number.isNaN(d.getTime())) {
+    const now = new Date();
+    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  }
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+}
+function invoiceMonthLabel(value: any) {
+  const raw = invoiceMonthStart(value);
+  const [year, month] = raw.split('-').map(Number);
+  const names = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  return `${names[(month || 1) - 1]} ${year}`;
+}
+function invoiceDefaultNumber(companyId: number, monthStart: string) {
+  const [year, month] = monthStart.split('-');
+  return `CM${String(companyId || 1).padStart(2, '0')}${String(year).slice(-2)}${String(month).padStart(2, '0')}`;
+}
+function moneyNumber(value: any) {
+  const n = Number(value || 0);
+  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+}
+function moneyText(value: any) {
+  return `$${moneyNumber(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function invoiceTotals(quantity: any, unitPrice: any, salesTaxRate: any) {
+  const qty = Math.max(0, Math.round(Number(quantity || 0)));
+  const price = moneyNumber(unitPrice);
+  const taxRate = Number(salesTaxRate || 0);
+  const subtotal = moneyNumber(qty * price);
+  const salesTax = moneyNumber(subtotal * (Number.isFinite(taxRate) ? taxRate : 0));
+  const total = moneyNumber(subtotal + salesTax);
+  return { quantity: qty, unitPrice: price, salesTaxRate: Number.isFinite(taxRate) ? taxRate : 0, subtotal, salesTax, total };
+}
+async function invoiceCurrentMvrCount(companyId: number) {
+  const result = await query(
+    `select count(*)::int as count
+     from applicants
+     where "companyId"=$1
+       and coalesce("terminated", false)=false
+       and lower(trim(coalesce("mvrStatus", '')))='on'`,
+    [companyId]
+  );
+  return Number(result.rows[0]?.count || 0);
+}
+function invoiceSelectSql() {
+  return `select id, "companyId", "invoiceNumber", "invoiceMonth", "invoiceDate", "dueDate", description, "serviceMonthLabel",
+                 quantity, "unitPrice", "salesTaxRate", subtotal, "salesTax", total, status,
+                 "billToName", "billToAddress1", "billToAddress2", "billToPhone", notes,
+                 "approvedAt", "createdAt", "updatedAt"
+          from invoices`;
+}
+async function getInvoiceById(id: number, companyId: number) {
+  const result = await query(`${invoiceSelectSql()} where id=$1 and "companyId"=$2 limit 1`, [id, companyId]);
+  return result.rows[0] || null;
+}
+async function ensureMonthlyInvoice(companyId: number, monthInput?: any) {
+  const monthStart = invoiceMonthStart(monthInput);
+  const existing = await query(`${invoiceSelectSql()} where "companyId"=$1 and "invoiceMonth"=$2 limit 1`, [companyId, monthStart]);
+  if (existing.rows[0]) return existing.rows[0];
+
+  const quantity = await invoiceCurrentMvrCount(companyId);
+  const totals = invoiceTotals(quantity, 1.00, 0.0825);
+  const invoiceDate = new Date().toISOString().slice(0, 10);
+  const due = new Date(`${invoiceDate}T00:00:00Z`);
+  due.setUTCDate(due.getUTCDate() + 30);
+  const dueDate = due.toISOString().slice(0, 10);
+
+  const result = await query(
+    `insert into invoices (
+      "companyId", "invoiceNumber", "invoiceMonth", "invoiceDate", "dueDate", description, "serviceMonthLabel",
+      quantity, "unitPrice", "salesTaxRate", subtotal, "salesTax", total, status,
+      "billToName", "billToAddress1", "billToAddress2", "billToPhone", notes
+    ) values (
+      $1,$2,$3,$4,$5,$6,$7,
+      $8,$9,$10,$11,$12,$13,'Draft',
+      $14,$15,$16,$17,$18
+    )
+    returning *`,
+    [
+      companyId,
+      invoiceDefaultNumber(companyId, monthStart),
+      monthStart,
+      invoiceDate,
+      dueDate,
+      'MVR Continuous Monitoring',
+      invoiceMonthLabel(monthStart),
+      totals.quantity,
+      totals.unitPrice,
+      totals.salesTaxRate,
+      totals.subtotal,
+      totals.salesTax,
+      totals.total,
+      'Driver Pipeline Company',
+      '1200 N Union Bower Rd.',
+      'Irving, TX 75061-5828',
+      '214-535-9174',
+      ''
+    ]
+  );
+  return result.rows[0];
+}
+function invoiceStatus(value: any) {
+  const raw = String(value || '').trim();
+  return raw === 'Approved' ? 'Approved' : 'Draft';
+}
+async function invoices(req: any, res: any, user: any) {
+  if (!requireAdmin(user, res)) return;
+  const companyId = requestedCompanyId(req, user);
+
+  if (req.method === 'GET') {
+    await ensureMonthlyInvoice(companyId);
+    const list = await query(`${invoiceSelectSql()} where "companyId"=$1 order by "invoiceMonth" desc, id desc limit 36`, [companyId]);
+    const currentCount = await invoiceCurrentMvrCount(companyId);
+    return json(res, 200, { status: 'ok', currentMvrOnCount: currentCount, invoices: list.rows });
+  }
+
+  if (req.method === 'POST') {
+    const body = await readBody(req);
+    const action = String(body.action || 'create-current').trim();
+
+    if (action === 'create-current' || action === 'create-month') {
+      const invoice = await ensureMonthlyInvoice(companyId, body.invoiceMonth);
+      return json(res, 200, { status: 'ok', invoice });
+    }
+
+    if (action === 'recalculate-count') {
+      const id = Number(body.id || 0);
+      const invoice = await getInvoiceById(id, companyId);
+      if (!invoice) return json(res, 404, { status: 'error', message: 'Invoice not found' });
+      if (invoice.status === 'Approved') return json(res, 400, { status: 'error', message: 'Approved invoices cannot be recalculated. Create a new invoice or edit before approval.' });
+
+      const quantity = await invoiceCurrentMvrCount(companyId);
+      const totals = invoiceTotals(quantity, invoice.unitPrice, invoice.salesTaxRate);
+      const result = await query(
+        `update invoices set quantity=$1, subtotal=$2, "salesTax"=$3, total=$4, "updatedAt"=now()
+         where id=$5 and "companyId"=$6 returning *`,
+        [totals.quantity, totals.subtotal, totals.salesTax, totals.total, id, companyId]
+      );
+      return json(res, 200, { status: 'ok', invoice: result.rows[0] });
+    }
+
+    if (action === 'approve') {
+      const id = Number(body.id || 0);
+      const invoice = await getInvoiceById(id, companyId);
+      if (!invoice) return json(res, 404, { status: 'error', message: 'Invoice not found' });
+
+      const result = await query(
+        `update invoices
+         set status='Approved', "approvedAt"=coalesce("approvedAt", now()), "updatedAt"=now()
+         where id=$1 and "companyId"=$2 returning *`,
+        [id, companyId]
+      );
+      return json(res, 200, { status: 'ok', invoice: result.rows[0] });
+    }
+
+    if (action === 'reopen') {
+      const id = Number(body.id || 0);
+      const invoice = await getInvoiceById(id, companyId);
+      if (!invoice) return json(res, 404, { status: 'error', message: 'Invoice not found' });
+
+      const result = await query(
+        `update invoices
+         set status='Draft', "approvedAt"=null, "updatedAt"=now()
+         where id=$1 and "companyId"=$2 returning *`,
+        [id, companyId]
+      );
+      return json(res, 200, { status: 'ok', invoice: result.rows[0] });
+    }
+
+    return json(res, 400, { status: 'error', message: 'Unknown invoice action' });
+  }
+
+  if (req.method === 'PATCH') {
+    const body = await readBody(req);
+    const id = Number(body.id || 0);
+    const invoice = await getInvoiceById(id, companyId);
+    if (!invoice) return json(res, 404, { status: 'error', message: 'Invoice not found' });
+    if (invoice.status === 'Approved') return json(res, 400, { status: 'error', message: 'Approved invoices are locked. Reopen the invoice before editing.' });
+
+    const quantity = body.quantity === undefined ? invoice.quantity : Number(body.quantity || 0);
+    const unitPrice = body.unitPrice === undefined ? invoice.unitPrice : Number(body.unitPrice || 0);
+    const salesTaxRate = body.salesTaxRate === undefined ? invoice.salesTaxRate : Number(body.salesTaxRate || 0);
+    const totals = invoiceTotals(quantity, unitPrice, salesTaxRate);
+
+    const result = await query(
+      `update invoices set
+        "invoiceNumber"=$1,
+        "invoiceDate"=$2,
+        "dueDate"=$3,
+        description=$4,
+        "serviceMonthLabel"=$5,
+        quantity=$6,
+        "unitPrice"=$7,
+        "salesTaxRate"=$8,
+        subtotal=$9,
+        "salesTax"=$10,
+        total=$11,
+        "billToName"=$12,
+        "billToAddress1"=$13,
+        "billToAddress2"=$14,
+        "billToPhone"=$15,
+        notes=$16,
+        status=$17,
+        "updatedAt"=now()
+       where id=$18 and "companyId"=$19
+       returning *`,
+      [
+        String(body.invoiceNumber ?? invoice.invoiceNumber ?? '').trim(),
+        invoiceDateOnly(body.invoiceDate ?? invoice.invoiceDate) || new Date().toISOString().slice(0, 10),
+        invoiceDateOnly(body.dueDate ?? invoice.dueDate) || invoiceDateOnly(invoice.dueDate),
+        String(body.description ?? invoice.description ?? 'MVR Continuous Monitoring').trim(),
+        String(body.serviceMonthLabel ?? invoice.serviceMonthLabel ?? '').trim(),
+        totals.quantity,
+        totals.unitPrice,
+        totals.salesTaxRate,
+        totals.subtotal,
+        totals.salesTax,
+        totals.total,
+        String(body.billToName ?? invoice.billToName ?? '').trim(),
+        String(body.billToAddress1 ?? invoice.billToAddress1 ?? '').trim(),
+        String(body.billToAddress2 ?? invoice.billToAddress2 ?? '').trim(),
+        String(body.billToPhone ?? invoice.billToPhone ?? '').trim(),
+        String(body.notes ?? invoice.notes ?? '').trim(),
+        invoiceStatus(body.status ?? invoice.status),
+        id,
+        companyId
+      ]
+    );
+    return json(res, 200, { status: 'ok', invoice: result.rows[0] });
+  }
+
+  return json(res, 405, { status: 'error', message: 'Method not allowed' });
+}
+function pdfText(value: any) {
+  return String(value ?? '').replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function drawRight(page: any, textValue: string, xRight: number, y: number, options: any) {
+  const width = options.font.widthOfTextAtSize(textValue, options.size);
+  page.drawText(textValue, { ...options, x: xRight - width, y });
+}
+async function invoicePdf(req: any, res: any, user: any) {
+  if (!requireAdmin(user, res)) return;
+  const companyId = requestedCompanyId(req, user);
+  const url = new URL(req.url || '/', 'https://local.test');
+  const id = Number(url.searchParams.get('id') || 0);
+  const invoice = await getInvoiceById(id, companyId);
+  if (!invoice) return json(res, 404, { status: 'error', message: 'Invoice not found' });
+  if (invoice.status !== 'Approved') return json(res, 400, { status: 'error', message: 'Invoice must be approved before PDF download' });
+
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([612, 792]);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const blue = rgb(0.13, 0.20, 0.58);
+  const green = rgb(0.24, 0.78, 0.20);
+  const dark = rgb(0.05, 0.06, 0.10);
+  const gray = rgb(0.35, 0.38, 0.42);
+  const light = rgb(0.94, 0.95, 0.97);
+
+  const left = 42;
+  const right = 570;
+  let y = 742;
+
+  page.drawRectangle({ x: 0, y: 784, width: 612, height: 8, color: blue });
+
+  page.drawText('Make Payable To:', { x: left, y, size: 16, font: bold, color: dark });
+  y -= 22;
+  page.drawText('Saffhire', { x: left, y, size: 13, font: bold, color: dark });
+  y -= 17;
+  page.drawText('3245 Main St. Suite 235-200', { x: left, y, size: 12, font, color: dark });
+  y -= 16;
+  page.drawText('Frisco, TX 75034', { x: left, y, size: 12, font, color: dark });
+  y -= 16;
+  page.drawText('Phone: 888-250-1033', { x: left, y, size: 12, font, color: dark });
+
+  page.drawText('Invoice', { x: 264, y: 742, size: 18, font: bold, color: dark });
+  page.drawText('SAFF', { x: 404, y: 744, size: 24, font: bold, color: blue });
+  page.drawText('HIRE', { x: 465, y: 744, size: 24, font: bold, color: green });
+  page.drawText('BACKGROUND SCREENING', { x: 404, y: 728, size: 9, font: bold, color: blue });
+
+  y = 610;
+  page.drawText('Bill To:', { x: left, y, size: 14, font: bold, color: gray });
+  y -= 20;
+  page.drawText(pdfText(invoice.billToName || 'Driver Pipeline Company'), { x: left, y, size: 12, font: bold, color: dark });
+  y -= 17;
+  page.drawText(pdfText(invoice.billToAddress1 || ''), { x: left, y, size: 12, font, color: dark });
+  y -= 17;
+  page.drawText(pdfText(invoice.billToAddress2 || ''), { x: left, y, size: 12, font, color: dark });
+  if (invoice.billToPhone) {
+    y -= 17;
+    page.drawText(pdfText(invoice.billToPhone), { x: left, y, size: 12, font, color: dark });
+  }
+
+  const labelX = 398;
+  const valueX = 560;
+  y = 610;
+  page.drawText('Invoice #', { x: labelX, y, size: 14, font: bold, color: gray });
+  drawRight(page, pdfText(invoice.invoiceNumber), valueX, y, { size: 14, font: bold, color: gray });
+  y -= 22;
+  page.drawText('Invoice Date:', { x: labelX, y, size: 12, font, color: dark });
+  drawRight(page, invoiceDateOnly(invoice.invoiceDate), valueX, y, { size: 12, font, color: dark });
+  y -= 22;
+  page.drawText('Customer #:', { x: labelX, y, size: 12, font, color: dark });
+  drawRight(page, `Company ${invoice.companyId}`, valueX, y, { size: 12, font, color: dark });
+  y -= 22;
+  page.drawText('Representative:', { x: labelX, y, size: 12, font, color: dark });
+  drawRight(page, 'Robert Krebsbach', valueX, y, { size: 12, font, color: dark });
+  y -= 22;
+  page.drawText('Date Due:', { x: labelX, y, size: 12, font, color: dark });
+  drawRight(page, invoiceDateOnly(invoice.dueDate), valueX, y, { size: 12, font, color: dark });
+
+  y = 456;
+  page.drawRectangle({ x: left, y, width: right - left, height: 18, color: blue });
+  y -= 32;
+
+  page.drawText('Description', { x: left, y, size: 13, font: bold, color: dark });
+  page.drawText('Qty', { x: 392, y, size: 13, font: bold, color: dark });
+  page.drawText('Unit price', { x: 452, y, size: 13, font: bold, color: dark });
+  page.drawText('Total price', { x: 522, y, size: 13, font: bold, color: dark });
+
+  y -= 20;
+  page.drawRectangle({ x: left, y: y - 6, width: right - left, height: 22, color: light });
+  page.drawText(pdfText(invoice.description || 'MVR Continuous Monitoring'), { x: left + 4, y, size: 12, font, color: dark });
+  page.drawText(String(invoice.quantity || 0), { x: 395, y, size: 12, font, color: gray });
+  drawRight(page, moneyText(invoice.unitPrice), 512, y, { size: 12, font, color: gray });
+  drawRight(page, moneyText(invoice.subtotal), right - 4, y, { size: 12, font, color: gray });
+
+  y -= 22;
+  page.drawText(pdfText(invoice.serviceMonthLabel || invoiceMonthLabel(invoice.invoiceMonth)), { x: left + 4, y, size: 12, font, color: dark });
+
+  y = 224;
+  page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 0.75, color: gray });
+
+  y -= 36;
+  page.drawText('Sales Tax', { x: 452, y, size: 12, font, color: dark });
+  drawRight(page, moneyText(invoice.salesTax), right - 4, y, { size: 12, font: bold, color: dark });
+  y -= 20;
+  page.drawLine({ start: { x: 416, y: y + 12 }, end: { x: right, y: y + 12 }, thickness: 0.5, color: gray });
+  page.drawText('Total Amount Due:', { x: 430, y, size: 12, font, color: dark });
+  drawRight(page, moneyText(invoice.total), right - 4, y, { size: 12, font: bold, color: dark });
+
+  y = 104;
+  page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 0.75, color: dark });
+  y -= 28;
+  page.drawText('Terms: Upon Invoicing', { x: 258, y, size: 10, font, color: dark });
+  y -= 26;
+  page.drawText('All Discrepancies Must Be Brought To Our Attention Within 30 Days.', { x: 156, y, size: 10, font, color: dark });
+  y -= 14;
+  page.drawText("All Late Fees, Collection Costs, And Attorney's Fees May Be Added To Past Due Accounts.", { x: 112, y, size: 10, font, color: dark });
+
+  const bytes = await pdfDoc.save();
+  const safeNumber = pdfText(invoice.invoiceNumber || id).replace(/[^a-zA-Z0-9_-]/g, '') || `invoice-${id}`;
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeNumber}.pdf"`);
+  res.end(Buffer.from(bytes));
+}
+// PHASE12A52_ADMIN_INVOICES END
+
+
 // PHASE12A11_TAZWORKS_SYNC END
 
 
@@ -1455,6 +1827,8 @@ export default async function handler(req: any, res: any) {
     if (route === 'client-dashboard') return clientDashboard(req, res, user);
     if (route === 'client-users') return clientUsers(req, res, user);
     if (route === 'client-safety-pdf') return clientSafetyPdf(req, res, user);
+    if (route === 'invoices') return invoices(req, res, user);
+    if (route === 'invoices/pdf') return invoicePdf(req, res, user);
     if (route === 'system-check') return systemCheck(req, res, user);
     return json(res, 404, { status: 'error', message: `Route not found: ${route}` });
   } catch (error: any) {
