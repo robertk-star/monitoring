@@ -1486,13 +1486,14 @@ function invoiceTotals(quantity: any, unitPrice: any, salesTaxRate: any) {
   return { quantity: qty, unitPrice: price, salesTaxRate: Number.isFinite(taxRate) ? taxRate : 0, subtotal, salesTax, total };
 }
 async function invoiceCurrentMvrCount(companyId: number) {
+  // PHASE12A56: cast monitorStatus enum to text before coalesce to avoid enum blank-value errors.
   // PHASE12A54: invoice quantity must match Monitoring page "On Monitoring" count.
   const result = await query(
     `select count(*)::int as count
      from applicants
      where "companyId"=$1
        and coalesce("terminated", false)=false
-       and lower(trim(coalesce("monitorStatus", '')))='on'`,
+       and lower(trim(coalesce("monitorStatus"::text, '')))='on'`,
     [companyId]
   );
   return Number(result.rows[0]?.count || 0);
