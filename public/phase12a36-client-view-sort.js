@@ -1010,11 +1010,25 @@
 
 
 
-
-// Phase 12A-47: Terminated notes + alert count fix
+// Phase 12A-48: Stable terminated-aware alerts, no flashing
 (function () {
+  let activeFilter = 'all';
+
   function text(el) {
     return (el && el.textContent ? el.textContent : '').trim();
+  }
+
+  function esc(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function isPortal() {
+    return location.pathname.includes('client-portal');
   }
 
   function currentTitle() {
@@ -1024,10 +1038,6 @@
   function activePortalPage() {
     const active = Array.from(document.querySelectorAll('nav button')).find((button) => button.classList.contains('active'));
     return active ? active.dataset.p : '';
-  }
-
-  function isPortal() {
-    return location.pathname.includes('client-portal');
   }
 
   function isMonitoringContext() {
@@ -1074,39 +1084,42 @@
     const headers = Array.from(table.querySelectorAll('thead th')).map((th) => normalizeHeader(text(th)));
     return {
       file: headers.indexOf('file #'),
+      name: headers.indexOf('name') >= 0 ? headers.indexOf('name') : headers.indexOf('applicant name'),
       monitoring: headers.indexOf('monitoring') >= 0 ? headers.indexOf('monitoring') : headers.indexOf('monitor status'),
-      mvr: headers.indexOf('order mvr') >= 0 ? headers.indexOf('order mvr') : (headers.indexOf('mvr status') >= 0 ? headers.indexOf('mvr status') : headers.indexOf('mvr')),
+      mvr: headers.indexOf('mvr status') >= 0 ? headers.indexOf('mvr status') : headers.indexOf('mvr'),
       medExpire: headers.indexOf('med expire'),
       notes: headers.indexOf('notes'),
       terminated: headers.indexOf('terminated')
     };
   }
 
-  function fileNumberFromRow(row, index) {
-    const raw = index >= 0 && row.children[index] ? text(row.children[index]) : '';
-    const match = raw.match(/[0-9]+/);
-    return match ? match[0] : '';
-  }
-
-  function rowNotes(row, notesIndex) {
-    if (notesIndex < 0 || !row.children[notesIndex]) return '';
-    const cell = row.children[notesIndex];
+  function cellValue(row, index) {
+    if (index < 0 || !row.children[index]) return '';
+    const cell = row.children[index];
+    const select = cell.querySelector('select');
+    if (select) return select.value || '';
     const textarea = cell.querySelector('textarea');
     if (textarea) return textarea.value || '';
-    const input = cell.querySelector('input');
+    const input = cell.querySelector('input:not([type="checkbox"])');
     if (input) return input.value || '';
     return text(cell);
   }
 
-  function rowMonitoring(row, idx) {
-    if (idx.monitoring < 0 || !row.children[idx.monitoring]) return '';
-    const select = row.children[idx.monitoring].querySelector('select');
-    return select ? select.value : text(row.children[idx.monitoring]);
+  function fileNumberFromRow(row, index) {
+    const raw = cellValue(row, index);
+    const match = raw.match(/[0-9]+/);
+    return match ? match[0] : '';
   }
 
-  function rowMedDate(row, idx) {
-    if (idx.medExpire < 0 || !row.children[idx.medExpire]) return null;
-    const raw = text(row.children[idx.medExpire]);
+  function isTerminatedRow(row) {
+    if (row.hasAttribute('data-phase12a46-monitoring-hidden')) return true;
+    if (row.hasAttribute('data-phase12a46-client-monitoring-hidden')) return true;
+    const cb = row.querySelector('[data-phase12a45-terminated], [data-unterm]');
+    return Boolean(cb && cb.checked);
+  }
+
+  function parseDate(value) {
+    const raw = String(value || '').trim();
     if (!raw) return null;
     const d = new Date(raw);
     if (Number.isNaN(d.getTime())) return null;
@@ -1118,72 +1131,254 @@
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
 
-  function isTerminatedRow(row) {
-    if (row.hasAttribute('data-phase12a46-monitoring-hidden')) return true;
-    if (row.hasAttribute('data-phase12a46-client-monitoring-hidden')) return true;
-    const cb = row.querySelector('[data-phase12a45-terminated], [data-unterm]');
-    return Boolean(cb && cb.checked);
+  function rowStatus(row, idx) {
+    if (isTerminatedRow(row)) return 'terminated';
+
+    const monitoring = cellValue(row, idx.monitoring);
+    const medRaw = cellValue(row, idx.medExpire);
+    const medDate = parseDate(medRaw);
+    const mvrText = cellValue(row, idx.mvr);
+
+    if (monitoring !== 'On') return 'off';
+    if (!medRaw || !medDate) return 'blank';
+
+    const days = Math.ceil((medDate.getTime() - today().getTime()) / 86400000);
+    if (days < 0) return 'expired';
+    if (days <= 30) return 'exp30';
+    if (days <= 60) return 'exp60';
+    if (/pending|review|needed|expired|attention/i.test(mvrText || '')) return 'mvr';
+    return 'ok';
+  }
+
+  function rows(table) {
+    return Array.from(table.querySelectorAll('tbody tr'));
+  }
+
+  function activeRows(table) {
+    return rows(table).filter((row) => !isTerminatedRow(row));
+  }
+
+  function counts(table) {
+    const idx = indexes(table);
+    const out = { total: 0, on: 0, off: 0, expired: 0, exp30: 0, exp60: 0, blank: 0, mvr: 0 };
+
+    activeRows(table).forEach((row) => {
+      const monitoring = cellValue(row, idx.monitoring);
+      const status = rowStatus(row, idx);
+
+      out.total++;
+      if (monitoring === 'On') out.on++;
+      else out.off++;
+
+      if (status === 'expired') out.expired++;
+      if (status === 'exp30') out.exp30++;
+      if (status === 'exp60') out.exp60++;
+      if (status === 'blank') out.blank++;
+      if (status === 'mvr') out.mvr++;
+    });
+
+    return out;
+  }
+
+  function shouldShow(row, idx) {
+    if (isTerminatedRow(row)) return false;
+
+    const monitoring = cellValue(row, idx.monitoring);
+    const status = rowStatus(row, idx);
+
+    if (activeFilter === 'all') return true;
+    if (activeFilter === 'on') return monitoring === 'On';
+    if (activeFilter === 'off') return monitoring !== 'On';
+    return status === activeFilter;
+  }
+
+  function applyFilter(table) {
+    const idx = indexes(table);
+    rows(table).forEach((row) => {
+      const hide = !shouldShow(row, idx);
+      row.toggleAttribute('data-phase12a48-alert-hidden', hide);
+    });
+  }
+
+  function metric(key, value, label) {
+    return `<button type="button" class="phase12a48-alert-card ${activeFilter === key ? 'active' : ''}" data-phase12a48-filter="${esc(key)}"><b>${esc(value)}</b><span>${esc(label)}</span></button>`;
+  }
+
+  function findOriginalAlertPanel(table) {
+    const cards = Array.from(document.querySelectorAll('.card, section, div')).filter((el) => {
+      if (el.id === 'phase12a48-admin-alerts') return false;
+      if (el.id === 'client-monitoring-alerts') return false;
+      return text(el).includes('Monitoring Alerts');
+    });
+
+    return cards.find((el) => !el.closest('#phase12a48-admin-alerts')) || null;
+  }
+
+  function renderAdminAlertPanel(table) {
+    if (isPortal()) return;
+
+    const original = findOriginalAlertPanel(table);
+    if (original) original.setAttribute('data-phase12a48-original-alerts', '1');
+
+    let panel = document.getElementById('phase12a48-admin-alerts');
+
+    if (!panel) {
+      panel = document.createElement('section');
+      panel.id = 'phase12a48-admin-alerts';
+      panel.className = 'card phase12a48-admin-alerts';
+
+      const tableCard = table.closest('.card, section') || table.parentElement;
+      if (original && original.parentElement) original.parentElement.insertBefore(panel, original);
+      else if (tableCard && tableCard.parentElement) tableCard.parentElement.insertBefore(panel, tableCard);
+      else document.body.prepend(panel);
+    }
+
+    const c = counts(table);
+    const signature = JSON.stringify({ c, activeFilter });
+
+    if (panel.dataset.signature !== signature) {
+      panel.dataset.signature = signature;
+      panel.innerHTML = `
+        <h3>Monitoring Alerts</h3>
+        <div class="phase12a48-alert-grid">
+          ${metric('all', c.total, 'Total')}
+          ${metric('on', c.on, 'On Monitoring')}
+          ${metric('off', c.off, 'Off Monitoring')}
+          ${metric('expired', c.expired, 'Expired Medical')}
+          ${metric('exp30', c.exp30, 'Expiring 30 Days')}
+          ${metric('exp60', c.exp60, 'Expiring 60 Days')}
+          ${metric('blank', c.blank, 'Blank Med Expire')}
+          ${metric('mvr', c.mvr, 'MVR Attention')}
+        </div>
+        <div class="phase12a48-alert-actions">
+          <button type="button" data-phase12a48-copy>Copy Summary</button>
+          <button type="button" data-phase12a48-csv>Download Current View CSV</button>
+          <button type="button" data-phase12a48-refresh>Recalculate Alerts</button>
+        </div>
+        <p class="phase12a48-help">Click an alert card to filter active Monitoring records. Terminated people are excluded.</p>
+      `;
+
+      panel.querySelectorAll('[data-phase12a48-filter]').forEach((button) => {
+        button.addEventListener('click', () => {
+          activeFilter = button.dataset.phase12a48Filter || 'all';
+          renderAdminAlertPanel(table);
+          applyFilter(table);
+        });
+      });
+
+      panel.querySelector('[data-phase12a48-refresh]')?.addEventListener('click', () => {
+        panel.dataset.signature = '';
+        renderAdminAlertPanel(table);
+        applyFilter(table);
+      });
+
+      panel.querySelector('[data-phase12a48-copy]')?.addEventListener('click', () => {
+        const latest = counts(table);
+        const summary = [
+          'Monitoring Summary',
+          `Total: ${latest.total}`,
+          `On Monitoring: ${latest.on}`,
+          `Off Monitoring: ${latest.off}`,
+          `Expired Medical: ${latest.expired}`,
+          `Expiring 30 Days: ${latest.exp30}`,
+          `Expiring 60 Days: ${latest.exp60}`,
+          `Blank Med Expire: ${latest.blank}`,
+          `MVR Attention: ${latest.mvr}`
+        ].join('\n');
+
+        navigator.clipboard?.writeText(summary).catch(() => prompt('Copy summary:', summary));
+      });
+
+      panel.querySelector('[data-phase12a48-csv]')?.addEventListener('click', () => downloadCsv(table));
+    }
+  }
+
+  function csvEscape(value) {
+    const s = String(value ?? '');
+    return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
+  }
+
+  function downloadCsv(table) {
+    const idx = indexes(table);
+    const header = ['File #', 'Name', 'Monitoring', 'Med Expire', 'Notes'];
+    const lines = [header.map(csvEscape).join(',')];
+
+    rows(table)
+      .filter((row) => !row.hasAttribute('data-phase12a48-alert-hidden') && !isTerminatedRow(row))
+      .forEach((row) => {
+        lines.push([
+          cellValue(row, idx.file),
+          cellValue(row, idx.name),
+          cellValue(row, idx.monitoring),
+          cellValue(row, idx.medExpire),
+          cellValue(row, idx.notes)
+        ].map(csvEscape).join(','));
+      });
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'monitoring-current-view.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   async function saveTerminatedWithNotes(row, checked) {
     const table = row.closest('table');
     if (!table) return;
+
     const idx = indexes(table);
     const file = fileNumberFromRow(row, idx.file);
-    const notes = rowNotes(row, idx.notes);
-
-    const checkbox = row.querySelector('[data-phase12a45-terminated]');
-    const idFromRow = row.dataset.applicantId || row.dataset.id;
-
-    let id = idFromRow ? Number(idFromRow) : 0;
+    const notes = cellValue(row, idx.notes);
+    let id = Number(row.dataset.applicantId || row.dataset.id || 0);
 
     if (!id && file) {
       try {
         const data = await api(isPortal() ? 'client-dashboard' : 'applicants');
-        const rows = isPortal() ? (data.recentApplicants || []) : (data.applicants || []);
-        const found = rows.find((item) => String(item.fileNumber) === String(file));
+        const list = isPortal() ? (data.recentApplicants || []) : (data.applicants || []);
+        const found = list.find((item) => String(item.fileNumber) === String(file));
         id = Number(found?.id || 0);
       } catch {}
     }
 
-    if (!id) return;
+    if (!id) throw new Error('Could not find applicant id for file ' + file);
 
-    const path = isPortal() ? 'client-applicant' : 'applicants';
-
-    await api(path, {
+    await api(isPortal() ? 'client-applicant' : 'applicants', {
       method: 'PATCH',
       body: JSON.stringify({ id, terminated: checked, notes })
     });
 
-    row.dataset.phase12a47NotesSaved = '1';
-
-    if (checked) {
-      row.setAttribute(isPortal() ? 'data-phase12a46-client-monitoring-hidden' : 'data-phase12a46-monitoring-hidden', '');
-    } else {
-      row.removeAttribute('data-phase12a46-client-monitoring-hidden');
-      row.removeAttribute('data-phase12a46-monitoring-hidden');
-    }
-
-    if (checkbox) checkbox.checked = checked;
+    row.toggleAttribute(isPortal() ? 'data-phase12a46-client-monitoring-hidden' : 'data-phase12a46-monitoring-hidden', checked);
+    row.toggleAttribute('data-phase12a48-alert-hidden', checked);
   }
 
   function bindTerminatedCheckboxes() {
     monitoringTables().forEach((table) => {
-      Array.from(table.querySelectorAll('tbody tr')).forEach((row) => {
+      rows(table).forEach((row) => {
         const checkbox = row.querySelector('[data-phase12a45-terminated]');
-        if (!checkbox || checkbox.dataset.phase12a47Bound === '1') return;
+        if (!checkbox || checkbox.dataset.phase12a48Bound === '1') return;
 
-        checkbox.dataset.phase12a47Bound = '1';
+        checkbox.dataset.phase12a48Bound = '1';
 
-        checkbox.addEventListener('change', async () => {
+        checkbox.addEventListener('change', async (event) => {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+
           const checked = checkbox.checked;
           checkbox.disabled = true;
 
           try {
             await saveTerminatedWithNotes(row, checked);
-            updateAlerts();
+            const t = row.closest('table');
+            if (t) {
+              applyFilter(t);
+              renderAdminAlertPanel(t);
+            }
           } catch (error) {
-            alert(error.message || 'Could not save terminated status and notes');
+            alert(error.message || 'Could not save terminated status');
             checkbox.checked = !checked;
           } finally {
             checkbox.disabled = false;
@@ -1193,109 +1388,118 @@
     });
   }
 
-  function countsForTable(table) {
-    const idx = indexes(table);
-    const out = { total: 0, on: 0, off: 0, expired: 0, exp30: 0, exp60: 0, blank: 0, mvr: 0 };
+  function refresh() {
+    const table = monitoringTables()[0];
 
-    Array.from(table.querySelectorAll('tbody tr')).forEach((row) => {
-      if (isTerminatedRow(row)) return;
+    if (!table) {
+      document.getElementById('phase12a48-admin-alerts')?.remove();
+      return;
+    }
 
-      const monitoring = rowMonitoring(row, idx);
-      const medDate = rowMedDate(row, idx);
-      const medRaw = idx.medExpire >= 0 && row.children[idx.medExpire] ? text(row.children[idx.medExpire]) : '';
-      const mvrText = idx.mvr >= 0 && row.children[idx.mvr] ? text(row.children[idx.mvr]) : '';
+    bindTerminatedCheckboxes();
 
-      out.total++;
-      if (monitoring === 'On') out.on++;
-      else out.off++;
-
-      if (monitoring === 'On') {
-        if (!medRaw) out.blank++;
-        else if (medDate) {
-          const days = Math.ceil((medDate.getTime() - today().getTime()) / 86400000);
-          if (days < 0) out.expired++;
-          else if (days <= 30) out.exp30++;
-          else if (days <= 60) out.exp60++;
-        }
-
-        if (/pending|review|needed|expired|attention/i.test(mvrText || '')) out.mvr++;
-      }
-    });
-
-    return out;
-  }
-
-  function setCard(labelPart, value) {
-    const cards = Array.from(document.querySelectorAll('button, .client-alert-card, [data-client-alert-filter]'));
-
-    for (const card of cards) {
-      const t = text(card).toLowerCase();
-      if (!t.includes(labelPart.toLowerCase())) continue;
-
-      const bold = card.querySelector('b');
-      if (bold) bold.textContent = String(value);
-      else {
-        // Handles admin alert button structure.
-        const first = card.firstElementChild;
-        if (first) first.textContent = String(value);
-      }
+    if (!isPortal()) {
+      renderAdminAlertPanel(table);
+      applyFilter(table);
     }
   }
 
-  function updateAlerts() {
-    const table = monitoringTables()[0];
-    if (!table) return;
-
-    const c = countsForTable(table);
-
-    setCard('Total', c.total);
-    setCard('On Monitoring', c.on);
-    setCard('Off Monitoring', c.off);
-    setCard('Expired Medical', c.expired);
-    setCard('Expiring 30 Days', c.exp30);
-    setCard('Expiring 60 Days', c.exp60);
-    setCard('Blank Med Expire', c.blank);
-    setCard('MVR Attention', c.mvr);
-  }
-
-  function improveTerminatedPageNotes() {
-    const title = currentTitle();
-    if (title !== 'Terminated' && activePortalPage() !== 'term') return;
-
-    // Terminated page tables already use notes from API. This just preserves visual formatting for longer notes.
-    Array.from(document.querySelectorAll('table tbody tr')).forEach((row) => {
-      const cells = Array.from(row.children);
-      const maybeNotes = cells.find((cell) => text(cell).length > 40 && !cell.querySelector('a'));
-      if (maybeNotes) maybeNotes.classList.add('phase12a47-notes-cell');
-    });
-  }
-
   function addStyles() {
-    if (document.getElementById('phase12a47-style')) return;
+    if (document.getElementById('phase12a48-style')) return;
 
     const style = document.createElement('style');
-    style.id = 'phase12a47-style';
+    style.id = 'phase12a48-style';
     style.textContent = `
-      .phase12a47-notes-cell {
-        max-width: 360px;
-        white-space: normal;
-        line-height: 1.35;
+      [data-phase12a48-original-alerts="1"] {
+        display: none !important;
+      }
+
+      tr[data-phase12a48-alert-hidden] {
+        display: none !important;
+      }
+
+      .phase12a48-admin-alerts {
+        border-left: 5px solid #38bdf8;
+        margin-bottom: 14px;
+      }
+
+      .phase12a48-admin-alerts h3 {
+        margin: 0 0 10px;
+      }
+
+      .phase12a48-alert-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(150px, 1fr));
+        gap: 10px;
+      }
+
+      .phase12a48-alert-card {
+        text-align: left;
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        border-radius: 12px;
+        padding: 10px 12px;
+        color: #0f172a;
+        cursor: pointer;
+      }
+
+      .phase12a48-alert-card b {
+        display: block;
+        font-size: 24px;
+        line-height: 1;
+      }
+
+      .phase12a48-alert-card span {
+        display: block;
+        margin-top: 4px;
+        font-weight: 900;
+      }
+
+      .phase12a48-alert-card.active {
+        border-color: #1fff00;
+        background: rgba(31, 255, 0, .16);
+      }
+
+      .phase12a48-alert-actions {
+        margin-top: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .phase12a48-alert-actions button {
+        border: 1px solid #38bdf8;
+        color: #075985;
+        background: #f0f9ff;
+        border-radius: 999px;
+        padding: 8px 11px;
+        font-weight: 1000;
+        cursor: pointer;
+      }
+
+      .phase12a48-help {
+        margin: 10px 0 0;
+        color: #64748b;
+        font-weight: 700;
+      }
+
+      @media(max-width:900px) {
+        .phase12a48-alert-grid {
+          grid-template-columns: repeat(2, minmax(140px, 1fr));
+        }
       }
     `;
+
     document.head.appendChild(style);
   }
 
   function boot() {
     addStyles();
-    bindTerminatedCheckboxes();
-    updateAlerts();
-    improveTerminatedPageNotes();
+    refresh();
 
-    setInterval(() => {
-      bindTerminatedCheckboxes();
-      updateAlerts();
-      improveTerminatedPageNotes();
-    }, 900);
+    // Slower refresh to detect page changes only.
+    // Counts are rendered by one stable panel, so they do not flash.
+    setInterval(refresh, 2500);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
