@@ -1372,3 +1372,148 @@
   else boot();
 })();
 
+
+
+
+// Phase 12A-59: Safe return from custom admin pages to original Monitoring app
+(function () {
+  const TARGET_KEY = 'saffhire_phase12a59_target_nav';
+
+  function text(el) {
+    return (el && el.textContent ? el.textContent : '').trim();
+  }
+
+  function isCustomAdminPageActive() {
+    return document.body.dataset.phase12a54Invoices === '1' ||
+      document.body.dataset.phase12a52InvoicePage === '1' ||
+      document.body.dataset.phase12a46TerminatedPage === '1';
+  }
+
+  function isMainAdminNavLabel(label) {
+    return [
+      'Dashboard',
+      'Monitoring',
+      'Safety Performance',
+      'Settings',
+      'Client View',
+      'Client Admin',
+      'Terminated'
+    ].includes(label);
+  }
+
+  function findNavButton(label) {
+    return Array.from(document.querySelectorAll('button, a')).find((el) => text(el) === label);
+  }
+
+  function clearCustomPageFlags() {
+    document.body.dataset.phase12a54Invoices = '0';
+    document.body.dataset.phase12a52InvoicePage = '0';
+    document.body.dataset.phase12a46TerminatedPage = '0';
+  }
+
+  function returnToOriginalApp(label) {
+    clearCustomPageFlags();
+    sessionStorage.setItem(TARGET_KEY, label || 'Monitoring');
+    window.location.reload();
+  }
+
+  function applySavedTarget() {
+    const target = sessionStorage.getItem(TARGET_KEY);
+    if (!target) return;
+
+    sessionStorage.removeItem(TARGET_KEY);
+
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries += 1;
+      const button = findNavButton(target);
+      if (button) {
+        button.click();
+        clearInterval(timer);
+      }
+      if (tries > 20) clearInterval(timer);
+    }, 250);
+  }
+
+  document.addEventListener('click', function (event) {
+    const target = event.target && event.target.closest ? event.target.closest('button, a') : null;
+    if (!target) return;
+
+    const label = text(target);
+    if (!isMainAdminNavLabel(label)) return;
+
+    // Let the custom Invoices/Terminated buttons render their own pages.
+    if (target.id === 'phase12a54-invoices-nav' || target.id === 'phase12a52-invoices-nav' || target.id === 'phase12a46-admin-terminated-nav') return;
+
+    if (!isCustomAdminPageActive()) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    returnToOriginalApp(label);
+  }, true);
+
+  function addHardResetButton() {
+    if (document.getElementById('phase12a59-monitoring-reset')) return;
+
+    const monitoring = findNavButton('Monitoring');
+    if (!monitoring || !monitoring.parentElement) return;
+
+    const btn = document.createElement('button');
+    btn.id = 'phase12a59-monitoring-reset';
+    btn.type = 'button';
+    btn.className = 'phase12a59-reset-button';
+    btn.textContent = 'Reload Monitoring';
+    btn.title = 'Use this if Monitoring ever opens to a blank page.';
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      returnToOriginalApp('Monitoring');
+    }, true);
+
+    monitoring.parentElement.insertBefore(btn, monitoring.nextSibling);
+  }
+
+  function addStyles() {
+    if (document.getElementById('phase12a59-style')) return;
+
+    const style = document.createElement('style');
+    style.id = 'phase12a59-style';
+    style.textContent = `
+      .phase12a59-reset-button {
+        width: calc(100% - 24px);
+        margin: 4px 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        padding: 8px 12px;
+        background: #fff;
+        color: #475569;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        font-weight: 800;
+        cursor: pointer;
+        text-align: left;
+        font-size: 12px;
+      }
+
+      .phase12a59-reset-button:hover {
+        border-color: #38bdf8;
+        background: #f0f9ff;
+        color: #075985;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function boot() {
+    addStyles();
+    applySavedTarget();
+    addHardResetButton();
+    setInterval(addHardResetButton, 1000);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+
