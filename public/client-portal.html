@@ -72,4 +72,330 @@
 })();
 </script>
 
+
+<script>
+// Phase 12A-38: Client Monitoring Alerts Header
+(function(){
+  let activeFilter = 'all';
+
+  function text(el){ return (el && el.textContent ? el.textContent : '').trim(); }
+  function activePage(){ const b=[...document.querySelectorAll('nav button')].find(x=>x.classList.contains('active')); return b ? b.dataset.p : ''; }
+  function isMonitoring(){ return activePage()==='mon' || text(document.querySelector('.head h2'))==='Monitoring'; }
+
+  function getMonitoringTable(){
+    if(!isMonitoring()) return null;
+    return [...document.querySelectorAll('table')].find(t=>{
+      const h=[...t.querySelectorAll('thead th')].map(th=>text(th).replace(/[↕↑↓]/g,'').trim().toLowerCase());
+      return h.includes('file #') && h.includes('monitoring') && h.includes('med expire');
+    }) || null;
+  }
+
+  function rows(){
+    const t=getMonitoringTable();
+    if(!t) return [];
+    return [...t.querySelectorAll('tbody tr')].filter(r=>r.children.length>=7);
+  }
+
+  function cell(row,index){
+    const c=row.children[index];
+    if(!c) return '';
+    const s=c.querySelector('select'); if(s) return s.value || '';
+    const ta=c.querySelector('textarea'); if(ta) return ta.value || '';
+    const inp=c.querySelector('input'); if(inp) return inp.value || '';
+    return text(c);
+  }
+
+  function parseDate(raw){
+    const s=String(raw||'').trim();
+    if(!s) return null;
+    let m=s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if(m) return new Date(Number(m[1]),Number(m[2])-1,Number(m[3]));
+    m=s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+    if(m){ const y=m[3].length===2?Number('20'+m[3]):Number(m[3]); return new Date(y,Number(m[1])-1,Number(m[2])); }
+    const d=new Date(s);
+    return Number.isNaN(d.getTime())?null:new Date(d.getFullYear(),d.getMonth(),d.getDate());
+  }
+
+  function today(){
+    const d=new Date();
+    return new Date(d.getFullYear(),d.getMonth(),d.getDate());
+  }
+
+  function rowData(row){
+    const med=cell(row,5);
+    const medDate=parseDate(med);
+    const days=medDate?Math.ceil((medDate.getTime()-today().getTime())/86400000):null;
+    return {
+      fileNumber: cell(row,0),
+      name: cell(row,1),
+      orderDate: cell(row,2),
+      monitoring: cell(row,3),
+      mvrStatus: cell(row,4),
+      medExpire: med,
+      medDate,
+      medDays: days,
+      notes: cell(row,6)
+    };
+  }
+
+  function state(row){
+    const d=rowData(row);
+    if(d.monitoring !== 'On') return 'off';
+    if(!d.medDate) return 'blank';
+    if(d.medDays < 0) return 'expired';
+    if(d.medDays <= 30) return 'exp30';
+    if(d.medDays <= 60) return 'exp60';
+    if(/pending|review|needed|expired|attention/i.test(d.mvrStatus||'')) return 'mvr';
+    return 'ok';
+  }
+
+  function counts(){
+    const out={total:0,on:0,off:0,expired:0,exp30:0,exp60:0,blank:0,mvr:0};
+    rows().forEach(row=>{
+      const d=rowData(row), s=state(row);
+      out.total++;
+      if(d.monitoring==='On') out.on++; else out.off++;
+      if(s==='expired') out.expired++;
+      if(s==='exp30') out.exp30++;
+      if(s==='exp60') out.exp60++;
+      if(s==='blank') out.blank++;
+      if(s==='mvr') out.mvr++;
+    });
+    return out;
+  }
+
+  function shouldShow(row){
+    const d=rowData(row), s=state(row);
+    if(activeFilter==='all') return true;
+    if(activeFilter==='on') return d.monitoring==='On';
+    if(activeFilter==='off') return d.monitoring!=='On';
+    if(activeFilter==='expired') return s==='expired';
+    if(activeFilter==='exp30') return s==='exp30';
+    if(activeFilter==='exp60') return s==='exp60';
+    if(activeFilter==='blank') return s==='blank';
+    if(activeFilter==='mvr') return s==='mvr';
+    return true;
+  }
+
+  function updateRowVisibility(){
+    rows().forEach(row=>{ row.style.display=shouldShow(row)?'':'none'; });
+  }
+
+  function getPanel(){
+    return document.getElementById('client-monitoring-alerts');
+  }
+
+  function metricHtml(key,value,label){
+    return `<button type="button" class="client-alert-card ${activeFilter===key?'active':''}" data-client-alert-filter="${key}"><b>${value}</b><span>${label}</span></button>`;
+  }
+
+  function renderPanel(){
+    const c=counts();
+    const panel=getPanel();
+    if(!panel) return;
+
+    panel.innerHTML=`
+      <h3>Monitoring Alerts</h3>
+      <div class="client-alert-grid">
+        ${metricHtml('all',c.total,'Total')}
+        ${metricHtml('on',c.on,'On Monitoring')}
+        ${metricHtml('off',c.off,'Off Monitoring')}
+        ${metricHtml('expired',c.expired,'Expired Medical')}
+        ${metricHtml('exp30',c.exp30,'Expiring 30 Days')}
+        ${metricHtml('exp60',c.exp60,'Expiring 60 Days')}
+        ${metricHtml('blank',c.blank,'Blank Med Expire')}
+        ${metricHtml('mvr',c.mvr,'MVR Attention')}
+      </div>
+      <div class="client-alert-actions">
+        <button type="button" id="client-copy-summary">Copy Summary</button>
+        <button type="button" id="client-download-csv">Download Current View CSV</button>
+        <button type="button" id="client-recalculate-alerts">Recalculate Alerts</button>
+      </div>
+      <p class="client-alert-help">Click an alert card to filter the visible Monitoring records. Click the same card again by choosing Total to show all.</p>
+    `;
+
+    panel.querySelectorAll('[data-client-alert-filter]').forEach(btn=>{
+      btn.onclick=()=>{
+        activeFilter=btn.dataset.clientAlertFilter || 'all';
+        renderPanel();
+        updateRowVisibility();
+      };
+    });
+
+    panel.querySelector('#client-copy-summary').onclick=copySummary;
+    panel.querySelector('#client-download-csv').onclick=downloadCsv;
+    panel.querySelector('#client-recalculate-alerts').onclick=()=>{ renderPanel(); updateRowVisibility(); };
+  }
+
+  function ensurePanel(){
+    if(!isMonitoring()){
+      document.getElementById('client-monitoring-alerts')?.remove();
+      return;
+    }
+
+    const t=getMonitoringTable();
+    if(!t) return;
+
+    if(!getPanel()){
+      const section=t.closest('section.card,.card') || t.parentElement;
+      const panel=document.createElement('section');
+      panel.id='client-monitoring-alerts';
+      panel.className='card client-monitoring-alerts';
+      section.parentElement.insertBefore(panel,section);
+    }
+
+    renderPanel();
+    updateRowVisibility();
+  }
+
+  function visibleRows(){
+    return rows().filter(r=>r.style.display !== 'none');
+  }
+
+  function csvEscape(value){
+    const s=String(value??'');
+    return /[",\n]/.test(s)?`"${s.replaceAll('"','""')}"`:s;
+  }
+
+  function downloadCsv(){
+    const header=['File #','Name','Order Date','Monitoring','MVR Status','Med Expire','Notes'];
+    const lines=[header.map(csvEscape).join(',')];
+    visibleRows().forEach(row=>{
+      const d=rowData(row);
+      lines.push([d.fileNumber,d.name,d.orderDate,d.monitoring,d.mvrStatus,d.medExpire,d.notes].map(csvEscape).join(','));
+    });
+    const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download='client-monitoring-current-view.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function copySummary(){
+    const c=counts();
+    const summary=[
+      `Monitoring Summary`,
+      `Total: ${c.total}`,
+      `On Monitoring: ${c.on}`,
+      `Off Monitoring: ${c.off}`,
+      `Expired Medical: ${c.expired}`,
+      `Expiring 30 Days: ${c.exp30}`,
+      `Expiring 60 Days: ${c.exp60}`,
+      `Blank Med Expire: ${c.blank}`,
+      `MVR Attention: ${c.mvr}`
+    ].join('\n');
+
+    try{
+      await navigator.clipboard.writeText(summary);
+      toast('Summary copied.');
+    }catch{
+      prompt('Copy summary:',summary);
+    }
+  }
+
+  function toast(message){
+    let box=document.getElementById('client-alert-toast');
+    if(!box){
+      box=document.createElement('div');
+      box.id='client-alert-toast';
+      document.body.appendChild(box);
+    }
+    box.textContent=message;
+    clearTimeout(box.t);
+    box.t=setTimeout(()=>box.remove(),3000);
+  }
+
+  function addStyles(){
+    if(document.getElementById('client-monitoring-alert-styles')) return;
+    const style=document.createElement('style');
+    style.id='client-monitoring-alert-styles';
+    style.textContent=`
+      .client-monitoring-alerts {
+        border-left: 5px solid #38bdf8;
+      }
+      .client-monitoring-alerts h3 {
+        margin: 0 0 10px;
+      }
+      .client-alert-grid {
+        display: grid;
+        grid-template-columns: repeat(4,minmax(160px,1fr));
+        gap: 10px;
+      }
+      .client-alert-card {
+        text-align: left;
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        border-radius: 12px;
+        padding: 10px 12px;
+        color: #0f172a;
+        cursor: pointer;
+      }
+      .client-alert-card b {
+        display: block;
+        font-size: 24px;
+        line-height: 1;
+      }
+      .client-alert-card span {
+        display: block;
+        margin-top: 4px;
+        font-weight: 900;
+      }
+      .client-alert-card.active {
+        border-color: #1fff00;
+        background: rgba(31,255,0,.16);
+      }
+      .client-alert-actions {
+        margin-top: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .client-alert-actions button {
+        border: 1px solid #38bdf8;
+        color: #075985;
+        background: #f0f9ff;
+        border-radius: 999px;
+        padding: 8px 11px;
+        font-weight: 1000;
+        cursor: pointer;
+      }
+      .client-alert-help {
+        margin: 10px 0 0;
+        color: #64748b;
+        font-weight: 700;
+      }
+      #client-alert-toast {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        z-index: 80;
+        background: #111827;
+        color: #fff;
+        border-radius: 12px;
+        padding: 12px 14px;
+        box-shadow: 0 18px 45px rgba(15,23,42,.25);
+      }
+      @media(max-width:900px){
+        .client-alert-grid{ grid-template-columns: repeat(2,minmax(150px,1fr)); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function boot(){
+    addStyles();
+    ensurePanel();
+    setInterval(ensurePanel,900);
+    document.addEventListener('change',()=>setTimeout(()=>{renderPanel();updateRowVisibility();},100),true);
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+  else boot();
+})();
+</script>
+
 </body></html>
