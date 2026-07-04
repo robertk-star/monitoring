@@ -1,20 +1,33 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
-    <title>Saffhire Monitoring Dashboard</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
-  </head>
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>SaffHire Monitoring</title><link rel="stylesheet" href="/phase4.css" /></head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-    <script
-      defer
-      src="%VITE_ANALYTICS_ENDPOINT%/umami"
-      data-website-id="%VITE_ANALYTICS_WEBSITE_ID%"></script>
+    <script>
+      window.__saffhireOriginalFetch = window.fetch.bind(window);
+      window.fetch = function(input, init) {
+        let url = typeof input === 'string' ? input : input && input.url;
+        if (typeof url === 'string' && url.startsWith('/api/') && !url.startsWith('/api/index') && !url.startsWith('/api/safety-response-link') && !url.startsWith('/api/safety-response') && !url.startsWith('/api/fmcsa-packet') && !url.startsWith('/api/pdf-medical')) {
+          const parts = url.split('?');
+          const routePath = parts[0].replace(/^\/api\/?/, '');
+          const query = parts[1] ? '&' + parts[1] : '';
+          const nextUrl = '/api/index?path=' + encodeURIComponent(routePath) + query;
+          if (typeof input === 'string') return window.__saffhireOriginalFetch(nextUrl, init);
+          input = new Request(nextUrl, input);
+        }
+        return window.__saffhireOriginalFetch(input, init);
+      };
+    </script>
+    <script src="/phase12a9-no-flash-safety-cleanup.js"></script>
+    <script type="module" src="/src/main.jsx"></script>
+    <script src="/phase4b.js"></script><script src="/phase4c.js"></script><script src="/phase4d.js"></script><script src="/phase5a.js"></script><script src="/phase6.js"></script><script src="/phase7.js"></script><script src="/phase7a-fmcsa.js"></script><script src="/phase8.js"></script><script src="/phase9.js"></script><script src="/phase9b-role-sync.js"></script><script src="/phase10-medical-pdfs.js"></script><script src="/phase10r-safe-header-sort.js"></script><script src="/phase12a-tazworks-sync.js"></script><script src="/phase12a6-monitoring-alerts-fix.js"></script><script src="/phase12a7-dropdown-only-green.js"></script>
+      <script src="/phase12a17-mvr-test-link.js"></script>
+      <script src="/phase12a20-settings-panel-cleanup.js"></script>
+      <script src="/phase12a21-refresh-button-fix.js"></script>
+      <script src="/phase12a22-sync-log-loading-state.js"></script>
+      <script src="/phase12a23-clear-sync-log.js"></script>
+      <script src="/phase12a24-client-view-admin.js"></script>
+      <script src="/phase12a25-remove-rogue-employer-response-panel.js"></script>
       <script src="/phase12a36-client-view-sort.js"></script>
   </body>
 </html>
