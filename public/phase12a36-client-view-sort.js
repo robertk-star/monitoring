@@ -1010,44 +1010,18 @@
 
 
 
-
-// Phase 12A-47: Terminated notes + alert count fix
+// Phase 12A-51: Save notes when terminated changes without touching alert totals
 (function () {
   function text(el) {
     return (el && el.textContent ? el.textContent : '').trim();
-  }
-
-  function currentTitle() {
-    return text(document.querySelector('.page-header h1')) || text(document.querySelector('.head h2'));
-  }
-
-  function activePortalPage() {
-    const active = Array.from(document.querySelectorAll('nav button')).find((button) => button.classList.contains('active'));
-    return active ? active.dataset.p : '';
   }
 
   function isPortal() {
     return location.pathname.includes('client-portal');
   }
 
-  function isMonitoringContext() {
-    const title = currentTitle();
-    return title === 'Monitoring' || title === 'Client View' || activePortalPage() === 'mon';
-  }
-
   function endpoint(path) {
     return '/api/index?path=' + encodeURIComponent(path);
-  }
-
-  async function api(path, options) {
-    const res = await fetch(endpoint(path), Object.assign({ credentials: 'include' }, options || {}, {
-      headers: Object.assign({ 'Content-Type': 'application/json' }, (options && options.headers) || {})
-    }));
-    const raw = await res.text();
-    let data = {};
-    try { data = raw ? JSON.parse(raw) : {}; } catch {}
-    if (!res.ok) throw new Error(data.message || raw || 'Request failed');
-    return data;
   }
 
   function normalizeHeader(value) {
@@ -1058,247 +1032,96 @@
       .toLowerCase();
   }
 
-  function monitoringTables() {
-    if (!isMonitoringContext()) return [];
-
-    return Array.from(document.querySelectorAll('table')).filter((table) => {
-      const headers = Array.from(table.querySelectorAll('thead th')).map((th) => normalizeHeader(text(th)));
-      return headers.includes('file #') &&
-        headers.includes('notes') &&
-        (headers.includes('monitoring') || headers.includes('monitor status')) &&
-        headers.includes('med expire');
-    });
-  }
-
   function indexes(table) {
     const headers = Array.from(table.querySelectorAll('thead th')).map((th) => normalizeHeader(text(th)));
     return {
       file: headers.indexOf('file #'),
-      monitoring: headers.indexOf('monitoring') >= 0 ? headers.indexOf('monitoring') : headers.indexOf('monitor status'),
-      mvr: headers.indexOf('order mvr') >= 0 ? headers.indexOf('order mvr') : (headers.indexOf('mvr status') >= 0 ? headers.indexOf('mvr status') : headers.indexOf('mvr')),
-      medExpire: headers.indexOf('med expire'),
-      notes: headers.indexOf('notes'),
-      terminated: headers.indexOf('terminated')
+      notes: headers.indexOf('notes')
     };
   }
 
+  function cellValue(row, index) {
+    if (index < 0 || !row.children[index]) return '';
+    const cell = row.children[index];
+    const textarea = cell.querySelector('textarea');
+    if (textarea) return textarea.value || '';
+    const input = cell.querySelector('input:not([type="checkbox"])');
+    if (input) return input.value || '';
+    const select = cell.querySelector('select');
+    if (select) return select.value || '';
+    return text(cell);
+  }
+
   function fileNumberFromRow(row, index) {
-    const raw = index >= 0 && row.children[index] ? text(row.children[index]) : '';
+    const raw = cellValue(row, index);
     const match = raw.match(/[0-9]+/);
     return match ? match[0] : '';
   }
 
-  function rowNotes(row, notesIndex) {
-    if (notesIndex < 0 || !row.children[notesIndex]) return '';
-    const cell = row.children[notesIndex];
-    const textarea = cell.querySelector('textarea');
-    if (textarea) return textarea.value || '';
-    const input = cell.querySelector('input');
-    if (input) return input.value || '';
-    return text(cell);
+  async function readJsonResponse(res) {
+    const raw = await res.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch {}
+    if (!res.ok) throw new Error(data.message || raw || 'Request failed');
+    return data;
   }
 
-  function rowMonitoring(row, idx) {
-    if (idx.monitoring < 0 || !row.children[idx.monitoring]) return '';
-    const select = row.children[idx.monitoring].querySelector('select');
-    return select ? select.value : text(row.children[idx.monitoring]);
+  async function api(path, options) {
+    const res = await fetch(endpoint(path), Object.assign({ credentials: 'include' }, options || {}, {
+      headers: Object.assign({ 'Content-Type': 'application/json' }, (options && options.headers) || {})
+    }));
+    return readJsonResponse(res);
   }
 
-  function rowMedDate(row, idx) {
-    if (idx.medExpire < 0 || !row.children[idx.medExpire]) return null;
-    const raw = text(row.children[idx.medExpire]);
-    if (!raw) return null;
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) return null;
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  async function findApplicantId(fileNumber) {
+    const data = await api(isPortal() ? 'client-dashboard' : 'applicants');
+    const rows = isPortal() ? (data.recentApplicants || []) : (data.applicants || []);
+    const found = rows.find((item) => String(item.fileNumber) === String(fileNumber));
+    return Number(found && found.id ? found.id : 0);
   }
 
-  function today() {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  }
-
-  function isTerminatedRow(row) {
-    if (row.hasAttribute('data-phase12a46-monitoring-hidden')) return true;
-    if (row.hasAttribute('data-phase12a46-client-monitoring-hidden')) return true;
-    const cb = row.querySelector('[data-phase12a45-terminated], [data-unterm]');
-    return Boolean(cb && cb.checked);
-  }
-
-  async function saveTerminatedWithNotes(row, checked) {
+  async function saveTerminatedAndNotes(row, checked) {
     const table = row.closest('table');
-    if (!table) return;
+    if (!table) throw new Error('Could not find monitoring table');
+
     const idx = indexes(table);
-    const file = fileNumberFromRow(row, idx.file);
-    const notes = rowNotes(row, idx.notes);
+    const fileNumber = fileNumberFromRow(row, idx.file);
+    const notes = cellValue(row, idx.notes);
 
-    const checkbox = row.querySelector('[data-phase12a45-terminated]');
-    const idFromRow = row.dataset.applicantId || row.dataset.id;
+    let id = Number(row.dataset.applicantId || row.dataset.id || 0);
+    if (!id) id = await findApplicantId(fileNumber);
+    if (!id) throw new Error('Could not find applicant id for file ' + fileNumber);
 
-    let id = idFromRow ? Number(idFromRow) : 0;
-
-    if (!id && file) {
-      try {
-        const data = await api(isPortal() ? 'client-dashboard' : 'applicants');
-        const rows = isPortal() ? (data.recentApplicants || []) : (data.applicants || []);
-        const found = rows.find((item) => String(item.fileNumber) === String(file));
-        id = Number(found?.id || 0);
-      } catch {}
-    }
-
-    if (!id) return;
-
-    const path = isPortal() ? 'client-applicant' : 'applicants';
-
-    await api(path, {
+    await api(isPortal() ? 'client-applicant' : 'applicants', {
       method: 'PATCH',
       body: JSON.stringify({ id, terminated: checked, notes })
     });
 
-    row.dataset.phase12a47NotesSaved = '1';
+    row.toggleAttribute(isPortal() ? 'data-phase12a46-client-monitoring-hidden' : 'data-phase12a46-monitoring-hidden', checked);
+  }
 
-    if (checked) {
-      row.setAttribute(isPortal() ? 'data-phase12a46-client-monitoring-hidden' : 'data-phase12a46-monitoring-hidden', '');
-    } else {
-      row.removeAttribute('data-phase12a46-client-monitoring-hidden');
-      row.removeAttribute('data-phase12a46-monitoring-hidden');
+  document.addEventListener('change', async function (event) {
+    const checkbox = event.target && event.target.closest ? event.target.closest('[data-phase12a45-terminated]') : null;
+    if (!checkbox) return;
+
+    // Stop the older terminated handler so it does not save a second request without notes.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const row = checkbox.closest('tr');
+    if (!row) return;
+
+    const checked = checkbox.checked;
+    checkbox.disabled = true;
+
+    try {
+      await saveTerminatedAndNotes(row, checked);
+    } catch (error) {
+      alert(error.message || 'Could not save terminated status');
+      checkbox.checked = !checked;
+    } finally {
+      checkbox.disabled = false;
     }
-
-    if (checkbox) checkbox.checked = checked;
-  }
-
-  function bindTerminatedCheckboxes() {
-    monitoringTables().forEach((table) => {
-      Array.from(table.querySelectorAll('tbody tr')).forEach((row) => {
-        const checkbox = row.querySelector('[data-phase12a45-terminated]');
-        if (!checkbox || checkbox.dataset.phase12a47Bound === '1') return;
-
-        checkbox.dataset.phase12a47Bound = '1';
-
-        checkbox.addEventListener('change', async () => {
-          const checked = checkbox.checked;
-          checkbox.disabled = true;
-
-          try {
-            await saveTerminatedWithNotes(row, checked);
-            updateAlerts();
-          } catch (error) {
-            alert(error.message || 'Could not save terminated status and notes');
-            checkbox.checked = !checked;
-          } finally {
-            checkbox.disabled = false;
-          }
-        }, true);
-      });
-    });
-  }
-
-  function countsForTable(table) {
-    const idx = indexes(table);
-    const out = { total: 0, on: 0, off: 0, expired: 0, exp30: 0, exp60: 0, blank: 0, mvr: 0 };
-
-    Array.from(table.querySelectorAll('tbody tr')).forEach((row) => {
-      if (isTerminatedRow(row)) return;
-
-      const monitoring = rowMonitoring(row, idx);
-      const medDate = rowMedDate(row, idx);
-      const medRaw = idx.medExpire >= 0 && row.children[idx.medExpire] ? text(row.children[idx.medExpire]) : '';
-      const mvrText = idx.mvr >= 0 && row.children[idx.mvr] ? text(row.children[idx.mvr]) : '';
-
-      out.total++;
-      if (monitoring === 'On') out.on++;
-      else out.off++;
-
-      if (monitoring === 'On') {
-        if (!medRaw) out.blank++;
-        else if (medDate) {
-          const days = Math.ceil((medDate.getTime() - today().getTime()) / 86400000);
-          if (days < 0) out.expired++;
-          else if (days <= 30) out.exp30++;
-          else if (days <= 60) out.exp60++;
-        }
-
-        if (/pending|review|needed|expired|attention/i.test(mvrText || '')) out.mvr++;
-      }
-    });
-
-    return out;
-  }
-
-  function setCard(labelPart, value) {
-    const cards = Array.from(document.querySelectorAll('button, .client-alert-card, [data-client-alert-filter]'));
-
-    for (const card of cards) {
-      const t = text(card).toLowerCase();
-      if (!t.includes(labelPart.toLowerCase())) continue;
-
-      const bold = card.querySelector('b');
-      if (bold) bold.textContent = String(value);
-      else {
-        // Handles admin alert button structure.
-        const first = card.firstElementChild;
-        if (first) first.textContent = String(value);
-      }
-    }
-  }
-
-  function updateAlerts() {
-    const table = monitoringTables()[0];
-    if (!table) return;
-
-    const c = countsForTable(table);
-
-    setCard('Total', c.total);
-    setCard('On Monitoring', c.on);
-    setCard('Off Monitoring', c.off);
-    setCard('Expired Medical', c.expired);
-    setCard('Expiring 30 Days', c.exp30);
-    setCard('Expiring 60 Days', c.exp60);
-    setCard('Blank Med Expire', c.blank);
-    setCard('MVR Attention', c.mvr);
-  }
-
-  function improveTerminatedPageNotes() {
-    const title = currentTitle();
-    if (title !== 'Terminated' && activePortalPage() !== 'term') return;
-
-    // Terminated page tables already use notes from API. This just preserves visual formatting for longer notes.
-    Array.from(document.querySelectorAll('table tbody tr')).forEach((row) => {
-      const cells = Array.from(row.children);
-      const maybeNotes = cells.find((cell) => text(cell).length > 40 && !cell.querySelector('a'));
-      if (maybeNotes) maybeNotes.classList.add('phase12a47-notes-cell');
-    });
-  }
-
-  function addStyles() {
-    if (document.getElementById('phase12a47-style')) return;
-
-    const style = document.createElement('style');
-    style.id = 'phase12a47-style';
-    style.textContent = `
-      .phase12a47-notes-cell {
-        max-width: 360px;
-        white-space: normal;
-        line-height: 1.35;
-      }
-    `;
-    document.head.appendChild(style);
-  }
-
-  function boot() {
-    addStyles();
-    bindTerminatedCheckboxes();
-    updateAlerts();
-    improveTerminatedPageNotes();
-
-    setInterval(() => {
-      bindTerminatedCheckboxes();
-      updateAlerts();
-      improveTerminatedPageNotes();
-    }, 900);
-  }
-
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  }, true);
 })();
 

@@ -13,10 +13,19 @@
     }) || null;
   }
 
+  // PHASE12A51_TERMINATED_ALERT_SOURCE_FIX
+  function isTerminatedRow(row) {
+    if (!row) return false;
+    if (row.hasAttribute('data-phase12a46-monitoring-hidden')) return true;
+    if (row.hasAttribute('data-phase12a46-client-monitoring-hidden')) return true;
+    const cb = row.querySelector('[data-phase12a45-terminated], [data-unterm]');
+    return Boolean(cb && cb.checked);
+  }
+
   function rows() {
     const table = getTable();
     if (!table) return [];
-    return Array.from(table.querySelectorAll('tbody tr')).filter((row) => row.querySelectorAll('td').length >= 7);
+    return Array.from(table.querySelectorAll('tbody tr')).filter((row) => row.querySelectorAll('td').length >= 7 && !isTerminatedRow(row));
   }
 
   function cellValue(cell) {
@@ -91,6 +100,7 @@
   }
 
   function shouldShow(row) {
+    if (isTerminatedRow(row)) return false;
     const d = data(row);
     const s = state(row);
     if (activeFilter === 'all') return true;
