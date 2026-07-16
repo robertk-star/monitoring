@@ -45,6 +45,7 @@
     return {
       file: find(['file #', 'file', 'reference', 'referenceid']),
       applicant: find(['applicant', 'applicant name', 'name']),
+      created: find(['created', 'created date', 'date created']),
       status: find(['status']),
       followUp: find(['follow up', 'followup']),
       employer: find(['previous employer', 'employer', 'company']),
@@ -82,6 +83,103 @@
       employerEmail: emailMatch ? emailMatch[0] : '',
       notes: cellValue(row, idx.notes)
     };
+  }
+
+
+
+  function parseSortDate(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return 0;
+    const time = Date.parse(raw);
+    if (!Number.isNaN(time)) return time;
+    const match = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    if (!match) return 0;
+    const year = match[3].length === 2 ? Number(`20${match[3]}`) : Number(match[3]);
+    return new Date(year, Number(match[1]) - 1, Number(match[2])).getTime();
+  }
+
+  function sortValue(row, key) {
+    const idx = indexes(row.closest('table'));
+    if (key === 'file') {
+      const raw = cellValue(row, idx.file);
+      const numeric = Number(String(raw).replace(/[^0-9.]/g, ''));
+      return Number.isFinite(numeric) ? numeric : String(raw).toLowerCase();
+    }
+    if (key === 'created') return parseSortDate(cellValue(row, idx.created));
+    if (key === 'followUp') return parseSortDate(cellValue(row, idx.followUp));
+    if (key === 'applicant') return cellValue(row, idx.applicant).toLowerCase();
+    if (key === 'status') return cellValue(row, idx.status).toLowerCase();
+    if (key === 'employer') return rowData(row).employer.toLowerCase();
+    return '';
+  }
+
+  function applySafetySort(table, key, direction) {
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll('tr'))
+      .filter((row) => row.children && row.children.length > 1 && !row.classList.contains('empty'));
+
+    rows.sort((a, b) => {
+      const av = sortValue(a, key);
+      const bv = sortValue(b, key);
+      let result;
+      if (typeof av === 'number' && typeof bv === 'number') result = av - bv;
+      else result = String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+      return direction === 'desc' ? -result : result;
+    });
+
+    rows.forEach((row) => tbody.appendChild(row));
+  }
+
+  function setSortHeaderLabel(th, active, direction) {
+    const base = th.dataset.phase6SortLabel || text(th).replace(/[↕↑↓▲▼]/g, '').trim();
+    th.dataset.phase6SortLabel = base;
+    th.innerHTML = '';
+    const span = document.createElement('span');
+    span.className = 'phase6-sort-head';
+    span.textContent = base;
+    const arrow = document.createElement('span');
+    arrow.className = 'phase6-sort-arrow';
+    arrow.textContent = active ? (direction === 'asc' ? '↑' : '↓') : '↕';
+    span.appendChild(arrow);
+    th.appendChild(span);
+  }
+
+  function makeSafetyTablesSortable() {
+    safetyTables().forEach((table) => {
+      const idx = indexes(table);
+      const sortable = [
+        ['file', idx.file],
+        ['applicant', idx.applicant],
+        ['created', idx.created],
+        ['status', idx.status],
+        ['followUp', idx.followUp],
+        ['employer', idx.employer]
+      ].filter(([, index]) => index >= 0);
+
+      sortable.forEach(([key, index]) => {
+        const th = table.querySelectorAll('thead th')[index];
+        if (!th) return;
+        if (!th.dataset.phase6Sortable) {
+          th.dataset.phase6Sortable = key;
+          th.title = 'Click to sort';
+          th.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const currentKey = table.dataset.phase6SortKey || '';
+            const currentDirection = table.dataset.phase6SortDirection || 'asc';
+            const nextDirection = currentKey === key && currentDirection === 'asc' ? 'desc' : 'asc';
+            table.dataset.phase6SortKey = key;
+            table.dataset.phase6SortDirection = nextDirection;
+            applySafetySort(table, key, nextDirection);
+            Array.from(table.querySelectorAll('thead th[data-phase6-sortable]')).forEach((header) => {
+              setSortHeaderLabel(header, header.dataset.phase6Sortable === key, nextDirection);
+            });
+          });
+        }
+        setSortHeaderLabel(th, table.dataset.phase6SortKey === key, table.dataset.phase6SortDirection || 'asc');
+      });
+    });
   }
 
   async function api(url, options) {
@@ -501,6 +599,10 @@
       [data-phase6-open-gmail] { background: #ea4335 !important; }
       [data-phase6-open-form] { background: #16a34a !important; }
       .phase6-note { margin: 12px 0 0; color: #64748b; font-size: 13px; }
+      th[data-phase6-sortable] { cursor: pointer; user-select: none; }
+      th[data-phase6-sortable]:hover { background: #eef2ff; color: #111827; }
+      .phase6-sort-head { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+      .phase6-sort-arrow { color: #2563eb; font-size: 12px; font-weight: 900; }
     `;
     document.head.appendChild(style);
   }
@@ -535,6 +637,7 @@
     addStyles();
     addPanel();
     addButtons();
+    makeSafetyTablesSortable();
     hookSafetyRefreshButton();
   }
 
