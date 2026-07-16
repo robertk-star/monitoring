@@ -73,7 +73,7 @@
       fileNumber: data.fileNumber
     };
 
-    const result = await api('/api/safety-response-link', {
+    const result = await api('/api/index?path=' + encodeURIComponent('safety-response-link'), {
       method: 'POST',
       body: JSON.stringify(payload)
     });

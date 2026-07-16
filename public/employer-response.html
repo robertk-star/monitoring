@@ -160,7 +160,7 @@
 
     async function load() {
       if (!token) throw new Error('Missing secure form token.');
-      const data = await api('/api/safety-response?token=' + encodeURIComponent(token));
+      const data = await api('/api/index?path=' + encodeURIComponent('safety-response') + '&token=' + encodeURIComponent(token));
       const report = data.report;
       summary.innerHTML = [
         ['Applicant', report.applicantName || ''],
@@ -200,7 +200,7 @@
         const button = form.querySelector('button[type="submit"]');
         button.disabled = true;
         button.textContent = 'Submitting...';
-        await api('/api/safety-response', { method: 'POST', body: JSON.stringify(body) });
+        await api('/api/index?path=' + encodeURIComponent('safety-response'), { method: 'POST', body: JSON.stringify(body) });
         form.classList.add('hidden');
         showMessage('Thank you. Your Safety Performance response has been submitted.', 'success');
       } catch (error) {
