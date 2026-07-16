@@ -12,13 +12,14 @@
   }
 
   function isSafetyPage() {
-    const title = text(document.querySelector('.page-header h1')) || text(document.querySelector('h1')) || text(document.querySelector('.head h2'));
-    if (/safety performance/i.test(title)) return true;
+    const titles = Array.from(document.querySelectorAll('.page-header h1, h1, .head h2'))
+      .map((el) => text(el))
+      .filter(Boolean);
 
-    return Array.from(document.querySelectorAll('table')).some((table) => {
-      const headers = Array.from(table.querySelectorAll('thead th')).map((th) => cleanHeader(text(th)));
-      return headers.some((h) => h.includes('file')) && headers.some((h) => h.includes('employer') || h.includes('previous'));
-    });
+    // Keep Phase 6 actions off the PDF Import / Applicant Database page.
+    // Only the actual Safety Performance Reports page should receive response-link
+    // buttons and the live TazWorks refresh behavior.
+    return titles.some((title) => /safety\s+performance\s+reports?/i.test(title));
   }
 
   function safetyTables() {
@@ -188,45 +189,78 @@
 
 
 
-  async function discoverNewSafetyReports() {
+  async function discoverNewSafetyReports(options) {
+    const opts = options || {};
+    const automatic = opts.automatic === true;
     const savedHost = localStorage.getItem('phase12a71-taz-host') || '';
-    const host = window.prompt('TazWorks host from Postman URL. Leave blank if your proxy already has the host configured.', savedHost);
-    if (host === null) return;
-    localStorage.setItem('phase12a71-taz-host', host.trim());
-
     const savedClientGuid = localStorage.getItem('phase12a71-client-guid') || '';
-    const clientGuid = window.prompt('Client GUID. Leave blank to use Vercel ENV TAZWORKS_CLIENT_GUID.', savedClientGuid);
-    if (clientGuid === null) return;
-    localStorage.setItem('phase12a71-client-guid', clientGuid.trim());
+    let host = savedHost;
+    let clientGuid = savedClientGuid;
+    let minFileNumber = Number(opts.minFileNumber || 6184) || 6184;
+    let maxPages = Number(opts.maxPages || 40) || 40;
 
-    const minFileNumberRaw = window.prompt('Pull Safety Performance orders greater than this file number:', '6184');
-    if (minFileNumberRaw === null) return;
-    const minFileNumber = Number(minFileNumberRaw || 6184) || 6184;
+    if (!automatic) {
+      const enteredHost = window.prompt('TazWorks host from Postman URL. Leave blank if your proxy already has the host configured.', savedHost);
+      if (enteredHost === null) return;
+      host = enteredHost.trim();
+      localStorage.setItem('phase12a71-taz-host', host);
 
-    const maxPagesRaw = window.prompt('How many TazWorks order pages should be checked? Default 20 pages × 25 orders.', '20');
-    if (maxPagesRaw === null) return;
-    const maxPages = Number(maxPagesRaw || 20) || 20;
+      const enteredClientGuid = window.prompt('Client GUID. Leave blank to use Vercel ENV TAZWORKS_CLIENT_GUID.', savedClientGuid);
+      if (enteredClientGuid === null) return;
+      clientGuid = enteredClientGuid.trim();
+      localStorage.setItem('phase12a71-client-guid', clientGuid);
 
-    toast(`Scanning TazWorks orders greater than ${minFileNumber} for Safety Performance information...`);
+      const minFileNumberRaw = window.prompt('Pull Safety Performance orders greater than this file number:', String(minFileNumber));
+      if (minFileNumberRaw === null) return;
+      minFileNumber = Number(minFileNumberRaw || minFileNumber) || minFileNumber;
+
+      const maxPagesRaw = window.prompt('Maximum TazWorks order pages to check. The scan stops early once it reaches file/order 6184.', String(maxPages));
+      if (maxPagesRaw === null) return;
+      maxPages = Number(maxPagesRaw || maxPages) || maxPages;
+    }
+
+    toast(`Refreshing live Safety Performance reports from TazWorks. Scanning new orders and stopping at ${minFileNumber}...`);
 
     const result = await apiWithFallback('safety-reports/live-discover', {
       method: 'POST',
       body: JSON.stringify({
         companyId: getCompanyId(),
-        host: host.trim(),
-        clientGuid: clientGuid.trim(),
+        host: String(host || '').trim(),
+        clientGuid: String(clientGuid || '').trim(),
         minFileNumber,
         pageSize: 25,
-        maxPages
+        maxPages,
+        stopAtMinFileNumber: true
       })
     });
 
     const summary = result.summary || {};
     const message = result.message || `Created ${summary.created || 0}, updated ${summary.updated || 0}.`;
-    const detail = ` Checked ${summary.ordersPulled || 0} orders; candidates > ${minFileNumber}: ${summary.candidatesGreaterThanMin || 0}; no safety search: ${summary.noSafetySearch || 0}; errors: ${summary.errorsCount || 0}.`;
+    const detail = ` Checked ${summary.ordersPulled || 0} orders; created ${summary.created || 0}; updated ${summary.updated || 0}; no Safety Performance search: ${summary.noSafetySearch || 0}; errors: ${summary.errorsCount || 0}.`;
     toast(message + detail, Number(summary.errorsCount || 0) > 0);
     setTimeout(() => window.location.reload(), 1800);
   }
+
+  function safetyRefreshButton() {
+    if (!isSafetyPage()) return null;
+    const buttons = Array.from(document.querySelectorAll('.page-header button, .head button, button'));
+    return buttons.find((button) => /^refresh$/i.test(text(button)) && !button.dataset.phase6RefreshHooked) || null;
+  }
+
+  function hookSafetyRefreshButton() {
+    const button = safetyRefreshButton();
+    if (!button) return;
+    button.dataset.phase6RefreshHooked = '1';
+    button.title = 'Refresh from TazWorks and auto-create new Safety Performance reports, stopping at order/file 6184.';
+    button.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      discoverNewSafetyReports({ automatic: true, minFileNumber: 6184, maxPages: 40 })
+        .catch((error) => toast(error.message || 'Could not refresh live Safety Performance reports.', true));
+    }, true);
+  }
+
 
   function buildRequestDraft(link, data, responseRole) {
     const isApplicant = responseRole === 'applicant';
@@ -411,14 +445,12 @@
     panel.className = 'card wide-card phase6-panel';
     panel.innerHTML = `
       <h2>Applicant + Employer Response Forms</h2>
-      <p>Use <b>Pull New Safety Reports &gt; 6184</b> to scan TazWorks orders and automatically create Safety Performance reports when an order has Safety Performance and DOT Verification information. Use <b>Pull Live Info</b> on one row to refresh that specific report.</p>
-      <div class="phase6-panel-actions">
-        <button type="button" data-phase6-discover-safety>Pull New Safety Reports &gt; 6184</button>
-      </div>
-      <p>Then use <b>Applicant Link</b> first so the applicant can verify Section 1 and sign electronically. Finally use <b>Employer Link</b> to send the signed form to the previous employer so they can complete Sections 2–5.</p>
+      <p>The page <b>Refresh</b> button now checks live TazWorks orders, stops at order/file <b>6184</b>, and automatically creates or updates Safety Performance reports when Safety Performance and DOT Verification information is found.</p>
+      <p>Each report keeps the same workflow: send the <b>Applicant Link</b> first so the applicant can verify Section 1 and sign electronically. Then send the <b>Employer Link</b> to the previous employer so they can complete Sections 2–5.</p>
     `;
     if (after) after.insertAdjacentElement('afterend', panel);
   }
+
 
   function addStyles() {
     if (document.getElementById('phase6-style')) return;
@@ -477,10 +509,6 @@
       copyText(draft.full, responseRole === 'applicant' ? 'Applicant verification email draft copied.' : 'Employer form email draft copied.');
       window.open(draft.gmailUrl, '_blank', 'noopener,noreferrer');
     }
-    if (event.target && event.target.closest && event.target.closest('[data-phase6-discover-safety]')) {
-      event.preventDefault();
-      discoverNewSafetyReports().catch((error) => toast(error.message || 'Could not pull new Safety Performance reports.', true));
-    }
   });
 
   function refresh() {
@@ -488,6 +516,7 @@
     addStyles();
     addPanel();
     addButtons();
+    hookSafetyRefreshButton();
   }
 
   setInterval(refresh, 1000);
