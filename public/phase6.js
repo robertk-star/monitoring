@@ -145,6 +145,27 @@
     th.appendChild(span);
   }
 
+  function applyDefaultSafetySort(table) {
+    if (!table || table.dataset.phase6ManualSort === '1') return;
+    const idx = indexes(table);
+    if (idx.file < 0) return;
+
+    // Default Safety Performance view: newest report/order at the top.
+    // File numbers track the newest orders, so use File # descending until the
+    // user manually clicks a sortable column header.
+    table.dataset.phase6SortKey = 'file';
+    table.dataset.phase6SortDirection = 'desc';
+    applySafetySort(table, 'file', 'desc');
+  }
+
+  function updateSafetySortHeaders(table) {
+    const activeKey = table.dataset.phase6SortKey || '';
+    const activeDirection = table.dataset.phase6SortDirection || 'asc';
+    Array.from(table.querySelectorAll('thead th[data-phase6-sortable]')).forEach((header) => {
+      setSortHeaderLabel(header, header.dataset.phase6Sortable === activeKey, activeDirection);
+    });
+  }
+
   function makeSafetyTablesSortable() {
     safetyTables().forEach((table) => {
       const idx = indexes(table);
@@ -166,19 +187,20 @@
           th.addEventListener('click', function (event) {
             event.preventDefault();
             event.stopPropagation();
+            table.dataset.phase6ManualSort = '1';
             const currentKey = table.dataset.phase6SortKey || '';
             const currentDirection = table.dataset.phase6SortDirection || 'asc';
             const nextDirection = currentKey === key && currentDirection === 'asc' ? 'desc' : 'asc';
             table.dataset.phase6SortKey = key;
             table.dataset.phase6SortDirection = nextDirection;
             applySafetySort(table, key, nextDirection);
-            Array.from(table.querySelectorAll('thead th[data-phase6-sortable]')).forEach((header) => {
-              setSortHeaderLabel(header, header.dataset.phase6Sortable === key, nextDirection);
-            });
+            updateSafetySortHeaders(table);
           });
         }
-        setSortHeaderLabel(th, table.dataset.phase6SortKey === key, table.dataset.phase6SortDirection || 'asc');
       });
+
+      applyDefaultSafetySort(table);
+      updateSafetySortHeaders(table);
     });
   }
 
