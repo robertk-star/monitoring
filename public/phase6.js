@@ -3,12 +3,53 @@
     return (el && el.textContent ? el.textContent : '').trim();
   }
 
-  function getRows() {
-    return Array.from(document.querySelectorAll('table tbody tr')).filter((row) => row.querySelectorAll('td').length >= 8);
+  function cleanHeader(value) {
+    return String(value || '')
+      .replace(/[↕↑↓▲▼]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
   }
 
-  function getCells(row) {
-    return Array.from(row.querySelectorAll('td'));
+  function isSafetyPage() {
+    const title = text(document.querySelector('.page-header h1')) || text(document.querySelector('h1')) || text(document.querySelector('.head h2'));
+    if (/safety performance/i.test(title)) return true;
+
+    return Array.from(document.querySelectorAll('table')).some((table) => {
+      const headers = Array.from(table.querySelectorAll('thead th')).map((th) => cleanHeader(text(th)));
+      return headers.some((h) => h.includes('file')) && headers.some((h) => h.includes('employer') || h.includes('previous'));
+    });
+  }
+
+  function safetyTables() {
+    if (!isSafetyPage()) return [];
+
+    return Array.from(document.querySelectorAll('table')).filter((table) => {
+      const headers = Array.from(table.querySelectorAll('thead th')).map((th) => cleanHeader(text(th)));
+      return headers.some((h) => h.includes('file')) &&
+        (headers.some((h) => h.includes('employer') || h.includes('previous')) || headers.some((h) => h.includes('status')));
+    });
+  }
+
+  function indexes(table) {
+    const headers = Array.from(table.querySelectorAll('thead th')).map((th) => cleanHeader(text(th)));
+    const find = (names) => {
+      for (const name of names) {
+        const idx = headers.findIndex((h) => h === name || h.includes(name));
+        if (idx >= 0) return idx;
+      }
+      return -1;
+    };
+
+    return {
+      file: find(['file #', 'file', 'reference', 'referenceid']),
+      applicant: find(['applicant', 'applicant name', 'name']),
+      status: find(['status']),
+      followUp: find(['follow up', 'followup']),
+      employer: find(['previous employer', 'employer', 'company']),
+      notes: find(['notes']),
+      actions: find(['actions', 'response'])
+    };
   }
 
   function getCompanyId() {
@@ -16,18 +57,29 @@
     return select && select.value ? select.value : '1';
   }
 
+  function cellValue(row, index) {
+    if (index < 0 || !row.children[index]) return '';
+    return text(row.children[index]);
+  }
+
   function rowData(row) {
-    const cells = getCells(row);
-    const employerText = text(cells[5]);
+    const table = row.closest('table');
+    const idx = indexes(table);
+    const cells = Array.from(row.children);
+    const employerText = cellValue(row, idx.employer);
     const emailMatch = employerText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+
+    let fileNumber = cellValue(row, idx.file);
+    if (!fileNumber && cells[0]) fileNumber = text(cells[0]);
+
     return {
-      fileNumber: text(cells[0]).replace(/[^0-9A-Za-z\-_.]/g, ''),
-      applicant: text(cells[1]),
-      status: text(cells[3]),
-      followUp: text(cells[4]),
+      fileNumber: String(fileNumber || '').replace(/[^0-9A-Za-z\-_.]/g, ''),
+      applicant: cellValue(row, idx.applicant),
+      status: cellValue(row, idx.status),
+      followUp: cellValue(row, idx.followUp),
       employer: employerText.split('\n')[0] || '',
       employerEmail: emailMatch ? emailMatch[0] : '',
-      notes: text(cells[6])
+      notes: cellValue(row, idx.notes)
     };
   }
 
@@ -38,8 +90,22 @@
     const raw = await response.text();
     let data = {};
     try { data = raw ? JSON.parse(raw) : {}; } catch {}
-    if (!response.ok) throw new Error(data.message || `Request failed: ${response.status}`);
+    if (!response.ok) throw new Error(data.message || raw || `Request failed: ${response.status}`);
     return data;
+  }
+
+  async function apiWithFallback(path, options) {
+    const consolidated = '/api/index?path=' + encodeURIComponent(path);
+    try {
+      return await api(consolidated, options);
+    } catch (firstError) {
+      if (path === 'safety-response-link') {
+        try {
+          return await api('/api/safety-response-link', options);
+        } catch {}
+      }
+      throw firstError;
+    }
   }
 
   function toast(message, danger) {
@@ -73,7 +139,7 @@
       fileNumber: data.fileNumber
     };
 
-    const result = await api('/api/index?path=' + encodeURIComponent('safety-response-link'), {
+    const result = await apiWithFallback('safety-response-link', {
       method: 'POST',
       body: JSON.stringify(payload)
     });
@@ -159,33 +225,64 @@
     getModal().classList.add('hidden');
   }
 
+  function ensureActionColumn(table) {
+    const idx = indexes(table);
+    if (idx.actions >= 0) return idx.actions;
+
+    const headerRow = table.querySelector('thead tr');
+    if (headerRow) {
+      const th = document.createElement('th');
+      th.textContent = 'Response Link';
+      headerRow.appendChild(th);
+    }
+
+    Array.from(table.querySelectorAll('tbody tr')).forEach((row) => {
+      if (row.dataset.phase6ActionCellAdded === '1') return;
+      const td = document.createElement('td');
+      row.appendChild(td);
+      row.dataset.phase6ActionCellAdded = '1';
+    });
+
+    return table.querySelectorAll('thead th').length - 1;
+  }
+
   function addButtons() {
-    getRows().forEach((row) => {
-      const cells = getCells(row);
-      if (!cells[7] || cells[7].querySelector('.phase6-link-button')) return;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'phase6-link-button';
-      button.textContent = 'Response Link';
-      button.addEventListener('click', () => {
-        generateLink(row).catch((error) => toast(error.message || 'Could not generate link.', true));
+    safetyTables().forEach((table) => {
+      const actionIndex = ensureActionColumn(table);
+      Array.from(table.querySelectorAll('tbody tr')).forEach((row) => {
+        const cells = Array.from(row.children);
+        const actionCell = cells[actionIndex] || cells[cells.length - 1];
+        if (!actionCell || actionCell.querySelector('.phase6-link-button')) return;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'phase6-link-button';
+        button.textContent = 'Response Link';
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          generateLink(row).catch((error) => toast(error.message || 'Could not generate link.', true));
+        });
+        actionCell.appendChild(button);
       });
-      cells[7].appendChild(button);
     });
   }
 
   function addPanel() {
-    const safetyHeader = Array.from(document.querySelectorAll('.page-header h1')).find((h) => text(h) === 'Safety Performance Reports');
-    if (!safetyHeader || document.getElementById('phase6-panel')) return;
-    const after = document.getElementById('phase5a-panel') || document.getElementById('phase4d-panel') || document.getElementById('phase4c-command-center') || safetyHeader.closest('.page-header');
+    if (!isSafetyPage() || document.getElementById('phase6-panel')) return;
+
+    const header = Array.from(document.querySelectorAll('.page-header h1, h1, .head h2')).find((h) => /safety performance/i.test(text(h)));
+    if (!header) return;
+
+    const after = document.getElementById('phase5a-panel') || document.getElementById('phase4d-panel') || document.getElementById('phase4c-command-center') || header.closest('.page-header') || header.closest('.head');
     const panel = document.createElement('section');
     panel.id = 'phase6-panel';
     panel.className = 'card wide-card phase6-panel';
     panel.innerHTML = `
-      <h2>Phase 6 Employer Response Form</h2>
+      <h2>Employer Response Form</h2>
       <p>Use <b>Response Link</b> to create a secure form link for a previous employer. When they submit the form, the answers save back to the Safety Performance report and the status changes to <b>Emp Complete</b>.</p>
     `;
-    after.insertAdjacentElement('afterend', panel);
+    if (after) after.insertAdjacentElement('afterend', panel);
   }
 
   function addStyles() {
@@ -195,9 +292,9 @@
     style.textContent = `
       .phase6-panel { margin-bottom: 16px; padding: 16px; border-left: 5px solid #16a34a; }
       .phase6-panel h2 { margin: 0 0 8px; }
-      .phase6-link-button { border: 1px solid #16a34a; background: #f0fdf4; color: #166534; border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 900; margin-top: 8px; }
+      .phase6-link-button { border: 1px solid #16a34a; background: #f0fdf4; color: #166534; border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 900; margin-top: 8px; cursor: pointer; }
       .phase6-link-button:hover { background: #dcfce7; }
-      .phase6-toast { position: fixed; right: 18px; bottom: 18px; z-index: 10004; background: #111827; color: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 18px 45px rgba(15,23,42,.25); font-size: 14px; max-width: 420px; }
+      .phase6-toast { position: fixed; right: 18px; bottom: 18px; z-index: 10004; background: #111827; color: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 18px 45px rgba(15,23,42,.25); font-size: 14px; max-width: 520px; }
       .phase6-toast.danger { background: #991b1b; }
       .phase6-modal { position: fixed; inset: 0; z-index: 10003; background: rgba(15,23,42,.55); display: flex; align-items: center; justify-content: center; padding: 18px; }
       .phase6-modal.hidden { display: none; }
@@ -209,7 +306,7 @@
       .phase6-link-box textarea { width: 100%; border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px 12px; font: inherit; }
       .phase6-link-meta { color: #475569; font-size: 13px; margin-top: 8px; }
       .phase6-modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 14px; }
-      .phase6-modal-actions button { border: 0; border-radius: 12px; padding: 10px 14px; font-weight: 900; background: #111827; color: #fff; }
+      .phase6-modal-actions button { border: 0; border-radius: 12px; padding: 10px 14px; font-weight: 900; background: #111827; color: #fff; cursor: pointer; }
       [data-phase6-open-gmail] { background: #ea4335 !important; }
       [data-phase6-open-form] { background: #16a34a !important; }
       .phase6-note { margin: 12px 0 0; color: #64748b; font-size: 13px; }
@@ -242,14 +339,13 @@
   });
 
   function refresh() {
-    const onSafetyPage = Array.from(document.querySelectorAll('.page-header h1')).some((h) => text(h) === 'Safety Performance Reports');
-    if (!onSafetyPage) return;
+    if (!isSafetyPage()) return;
     addStyles();
     addPanel();
     addButtons();
   }
 
-  setInterval(refresh, 1400);
+  setInterval(refresh, 1000);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', refresh);
   else refresh();
 })();

@@ -5,148 +5,97 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Safety Performance Response</title>
   <style>
-    :root { --green:#1fff00; --ink:#111827; --muted:#64748b; --line:#e2e8f0; --bg:#f8fafc; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
-    .shell { max-width: 920px; margin: 0 auto; padding: 24px; }
-    .card { background:#fff; border:1px solid var(--line); border-radius:18px; box-shadow:0 18px 50px rgba(15,23,42,.07); padding:22px; margin-bottom:16px; }
-    h1 { margin:0 0 8px; font-size:28px; }
-    h2 { margin:22px 0 12px; font-size:18px; border-bottom:1px solid var(--line); padding-bottom:8px; }
-    p { color: var(--muted); line-height:1.5; }
-    .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-    label { display:block; font-size:13px; font-weight:800; color:#475569; margin:12px 0 6px; }
-    input, select, textarea { width:100%; border:1px solid #cbd5e1; border-radius:10px; padding:10px 12px; font:inherit; }
-    textarea { resize:vertical; min-height:90px; }
-    .check-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; }
-    .check-row { display:flex; gap:8px; align-items:center; border:1px solid var(--line); border-radius:10px; padding:9px; font-weight:600; color:#334155; }
-    .check-row input { width:auto; }
-    .accident-row { display:grid; grid-template-columns:120px 1fr 110px 110px 110px; gap:8px; align-items:center; margin:8px 0; }
-    .summary { display:grid; grid-template-columns:160px 1fr; gap:8px; font-size:14px; }
-    .summary b { color:#475569; }
-    button { border:0; border-radius:12px; padding:12px 16px; font-weight:900; cursor:pointer; }
-    .primary { background:var(--green); color:#0f172a; }
-    .secondary { background:#111827; color:#fff; }
-    .actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
-    .message { padding:12px 14px; border-radius:12px; margin-bottom:16px; }
-    .error { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
-    .success { background:#dcfce7; color:#166534; border:1px solid #bbf7d0; }
-    .hidden { display:none; }
-    @media(max-width:760px){ .grid,.summary,.accident-row,.check-grid{grid-template-columns:1fr;} .shell{padding:14px;} }
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f8fafc; color: #0f172a; }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 28px 16px 46px; }
+    .card { background: #fff; border: 1px solid #dbe3ef; border-radius: 18px; box-shadow: 0 18px 48px rgba(15,23,42,.08); padding: 20px; }
+    h1 { margin: 0 0 6px; font-size: 28px; }
+    p { color: #475569; line-height: 1.5; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 900; color: #334155; }
+    input, select, textarea { border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 12px; font: inherit; color: #0f172a; background: #fff; }
+    textarea { min-height: 88px; }
+    .wide { grid-column: 1 / -1; }
+    .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+    .check { display: flex; align-items: center; gap: 8px; border: 1px solid #dbe3ef; border-radius: 12px; padding: 10px; font-weight: 800; color: #334155; }
+    .check input { width: auto; }
+    button { border: 0; border-radius: 14px; padding: 12px 16px; background: #16a34a; color: #fff; font-weight: 1000; cursor: pointer; }
+    .error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; padding: 12px; border-radius: 12px; margin: 14px 0; }
+    .ok { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 12px; border-radius: 12px; margin: 14px 0; }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } .checks { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-  <main class="shell">
+  <main class="wrap">
     <section class="card">
       <h1>Safety Performance Response</h1>
-      <p>Please complete the information below. Your response will be sent securely to SaffHire Background Screening.</p>
+      <p>Please complete the information below. This secure form saves directly back to SaffHire.</p>
+      <div id="message"></div>
+      <form id="form" style="display:none;">
+        <div class="grid">
+          <label>File Number<input name="fileNumber" readonly /></label>
+          <label>Applicant<input name="applicantName" readonly /></label>
+          <label>Previous Employer<input name="prevEmployerName" readonly /></label>
+          <label>Was applicant employed by your company?
+            <select name="employedByCompany"><option></option><option>Yes</option><option>No</option></select>
+          </label>
+          <label>Job Title<input name="jobTitle" /></label>
+          <label>From Date<input name="fromDate" type="date" /></label>
+          <label>To Date<input name="toDate" type="date" /></label>
+          <label>Did they drive a motor vehicle?
+            <select name="droveMotorVehicle"><option></option><option>Yes</option><option>No</option></select>
+          </label>
+          <div class="wide">
+            <b>Vehicle Type</b>
+            <div class="checks">
+              <label class="check"><input type="checkbox" name="vehicleStraightTruck" /> Straight Truck</label>
+              <label class="check"><input type="checkbox" name="vehicleTractorSemitrailer" /> Tractor/Semitrailer</label>
+              <label class="check"><input type="checkbox" name="vehicleBus" /> Bus</label>
+              <label class="check"><input type="checkbox" name="vehicleCargoTank" /> Cargo Tank</label>
+              <label class="check"><input type="checkbox" name="vehicleDoublesTriples" /> Doubles/Triples</label>
+              <label class="check"><input type="checkbox" name="vehicleOther" /> Other</label>
+            </div>
+          </div>
+          <label class="wide">Accident History
+            <select name="accidentHistory"><option></option><option>No accidents reported</option><option>Accidents reported below</option></select>
+          </label>
+          <label>Accident Date 1<input name="accidentDate1" type="date" /></label>
+          <label>Accident Location 1<input name="accidentLocation1" /></label>
+          <label>Injuries 1<input name="accidentInjuries1" /></label>
+          <label>Fatalities 1<input name="accidentFatalities1" /></label>
+          <label>Accident Date 2<input name="accidentDate2" type="date" /></label>
+          <label>Accident Location 2<input name="accidentLocation2" /></label>
+          <label>Injuries 2<input name="accidentInjuries2" /></label>
+          <label>Fatalities 2<input name="accidentFatalities2" /></label>
+          <label>Accident Date 3<input name="accidentDate3" type="date" /></label>
+          <label>Accident Location 3<input name="accidentLocation3" /></label>
+          <label>Injuries 3<input name="accidentInjuries3" /></label>
+          <label>Fatalities 3<input name="accidentFatalities3" /></label>
+          <label class="wide">Other Accident Details<textarea name="otherAccidents"></textarea></label>
+          <div class="wide">
+            <b>DOT Drug/Alcohol History</b>
+            <div class="checks">
+              <label class="check"><input type="checkbox" name="dotAlcoholTestPositive" /> Alcohol test positive</label>
+              <label class="check"><input type="checkbox" name="dotDrugTestPositive" /> Drug test positive</label>
+              <label class="check"><input type="checkbox" name="dotRefusedTest" /> Refused test</label>
+              <label class="check"><input type="checkbox" name="dotOtherViolations" /> Other DOT violation</label>
+            </div>
+          </div>
+          <label>Completed By<input name="infoReceivedFrom" /></label>
+          <label>Date Completed<input name="infoReceivedDate" type="date" /></label>
+          <label class="wide">Notes<textarea name="notes"></textarea></label>
+        </div>
+        <p><button type="submit">Submit Response</button></p>
+      </form>
     </section>
-    <div id="message"></div>
-    <section id="loading" class="card"><p>Loading secure form...</p></section>
-    <form id="form" class="card hidden">
-      <div class="summary" id="summary"></div>
-
-      <h2>Employment Verification</h2>
-      <div class="grid">
-        <label>Was the applicant employed by your company?
-          <select name="employedByCompany">
-            <option value="">Select...</option><option>Yes</option><option>No</option>
-          </select>
-        </label>
-        <label>Job Title / Position
-          <input name="jobTitle" />
-        </label>
-        <label>From Date
-          <input name="fromDate" type="date" />
-        </label>
-        <label>To Date
-          <input name="toDate" type="date" />
-        </label>
-        <label>Did the applicant drive a motor vehicle?
-          <select name="droveMotorVehicle">
-            <option value="">Select...</option><option>Yes</option><option>No</option>
-          </select>
-        </label>
-      </div>
-
-      <h2>Vehicle Types Operated</h2>
-      <div class="check-grid">
-        <label class="check-row"><input type="checkbox" name="vehicleStraightTruck" /> Straight Truck</label>
-        <label class="check-row"><input type="checkbox" name="vehicleTractorSemitrailer" /> Tractor/Semitrailer</label>
-        <label class="check-row"><input type="checkbox" name="vehicleBus" /> Bus</label>
-        <label class="check-row"><input type="checkbox" name="vehicleCargoTank" /> Cargo Tank</label>
-        <label class="check-row"><input type="checkbox" name="vehicleDoublesTriples" /> Doubles/Triples</label>
-        <label class="check-row"><input type="checkbox" name="vehicleOther" /> Other</label>
-      </div>
-
-      <h2>Accident History</h2>
-      <label>Accident History Summary
-        <select name="accidentHistory">
-          <option value="">Select...</option>
-          <option>No accidents reported</option>
-          <option>Accidents reported</option>
-        </select>
-      </label>
-      <div class="accident-row"><b>Accident 1</b><input name="accidentLocation1" placeholder="Location" /><input name="accidentDate1" type="date" /><input name="accidentInjuries1" placeholder="Injuries" /><input name="accidentFatalities1" placeholder="Fatalities" /></div>
-      <div class="accident-row"><b>Accident 2</b><input name="accidentLocation2" placeholder="Location" /><input name="accidentDate2" type="date" /><input name="accidentInjuries2" placeholder="Injuries" /><input name="accidentFatalities2" placeholder="Fatalities" /></div>
-      <div class="accident-row"><b>Accident 3</b><input name="accidentLocation3" placeholder="Location" /><input name="accidentDate3" type="date" /><input name="accidentInjuries3" placeholder="Injuries" /><input name="accidentFatalities3" placeholder="Fatalities" /></div>
-      <label>Other Accident Details
-        <textarea name="otherAccidents"></textarea>
-      </label>
-
-      <h2>DOT Drug and Alcohol Questions</h2>
-      <div class="check-grid">
-        <label class="check-row"><input type="checkbox" name="dotAlcoholTestPositive" /> Alcohol test positive</label>
-        <label class="check-row"><input type="checkbox" name="dotDrugTestPositive" /> Drug test positive</label>
-        <label class="check-row"><input type="checkbox" name="dotRefusedTest" /> Refused test</label>
-        <label class="check-row"><input type="checkbox" name="dotOtherViolations" /> Other DOT violations</label>
-      </div>
-
-      <h2>Completed By</h2>
-      <div class="grid">
-        <label>Your Name / Title
-          <input name="infoReceivedFrom" required />
-        </label>
-        <label>Date Completed
-          <input name="infoReceivedDate" type="date" required />
-        </label>
-      </div>
-      <label>Additional Notes
-        <textarea name="notes"></textarea>
-      </label>
-
-      <div class="actions">
-        <button type="submit" class="primary">Submit Response</button>
-      </div>
-    </form>
   </main>
   <script>
     const token = new URLSearchParams(location.search).get('token') || '';
     const message = document.getElementById('message');
-    const loading = document.getElementById('loading');
     const form = document.getElementById('form');
-    const summary = document.getElementById('summary');
 
-    function showMessage(text, type) {
-      message.innerHTML = '<div class="message ' + (type || '') + '">' + text + '</div>';
-    }
-
-    function value(name) {
-      const el = form.elements[name];
-      if (!el) return '';
-      if (el.type === 'checkbox') return el.checked;
-      return el.value;
-    }
-
-    function setValue(name, val) {
-      const el = form.elements[name];
-      if (!el || val === undefined || val === null) return;
-      if (el.type === 'checkbox') el.checked = Boolean(val);
-      else el.value = val;
-    }
-
-    function today() {
-      const d = new Date();
-      return d.toISOString().slice(0, 10);
+    function setMessage(html, cls) {
+      message.innerHTML = '<div class="' + cls + '">' + html + '</div>';
     }
 
     async function api(url, options) {
@@ -154,66 +103,50 @@
       const raw = await response.text();
       let data = {};
       try { data = raw ? JSON.parse(raw) : {}; } catch {}
-      if (!response.ok) throw new Error(data.message || 'Request failed');
+      if (!response.ok) throw new Error(data.message || raw || 'Request failed');
       return data;
+    }
+
+    async function apiSafety(pathSuffix, options) {
+      const newUrl = '/api/index?path=' + encodeURIComponent('safety-response') + pathSuffix;
+      try {
+        return await api(newUrl, options);
+      } catch (firstError) {
+        const oldUrl = '/api/safety-response' + pathSuffix.replace(/^&/, '?');
+        try { return await api(oldUrl, options); } catch {}
+        throw firstError;
+      }
+    }
+
+    function fillForm(report) {
+      Object.entries(report || {}).forEach(([key, value]) => {
+        const field = form.elements[key];
+        if (!field) return;
+        if (field.type === 'checkbox') field.checked = Boolean(value);
+        else field.value = value || '';
+      });
     }
 
     async function load() {
       if (!token) throw new Error('Missing secure form token.');
-      const data = await api('/api/index?path=' + encodeURIComponent('safety-response') + '&token=' + encodeURIComponent(token));
-      const report = data.report;
-      summary.innerHTML = [
-        ['Applicant', report.applicantName || ''],
-        ['File Number', report.fileNumber || ''],
-        ['Previous Employer', report.prevEmployerName || '']
-      ].map(([k,v]) => '<b>' + k + '</b><span>' + String(v || '') + '</span>').join('');
-
-      [
-        'employedByCompany','jobTitle','fromDate','toDate','droveMotorVehicle',
-        'vehicleStraightTruck','vehicleTractorSemitrailer','vehicleBus','vehicleCargoTank','vehicleDoublesTriples','vehicleOther',
-        'accidentHistory','accidentDate1','accidentLocation1','accidentInjuries1','accidentFatalities1',
-        'accidentDate2','accidentLocation2','accidentInjuries2','accidentFatalities2',
-        'accidentDate3','accidentLocation3','accidentInjuries3','accidentFatalities3',
-        'otherAccidents','dotAlcoholTestPositive','dotDrugTestPositive','dotRefusedTest','dotOtherViolations',
-        'infoReceivedFrom','infoReceivedDate'
-      ].forEach((field) => setValue(field, report[field]));
-
-      if (!form.elements.infoReceivedDate.value) form.elements.infoReceivedDate.value = today();
-      loading.classList.add('hidden');
-      form.classList.remove('hidden');
+      const data = await apiSafety('&token=' + encodeURIComponent(token));
+      fillForm(data.report || {});
+      form.style.display = '';
+      setMessage('Form loaded. Please complete and submit below.', 'ok');
     }
 
-    form.addEventListener('submit', async function (event) {
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const fields = [
-        'employedByCompany','jobTitle','fromDate','toDate','droveMotorVehicle',
-        'vehicleStraightTruck','vehicleTractorSemitrailer','vehicleBus','vehicleCargoTank','vehicleDoublesTriples','vehicleOther',
-        'accidentHistory','accidentDate1','accidentLocation1','accidentInjuries1','accidentFatalities1',
-        'accidentDate2','accidentLocation2','accidentInjuries2','accidentFatalities2',
-        'accidentDate3','accidentLocation3','accidentInjuries3','accidentFatalities3',
-        'otherAccidents','dotAlcoholTestPositive','dotDrugTestPositive','dotRefusedTest','dotOtherViolations',
-        'infoReceivedFrom','infoReceivedDate','notes'
-      ];
       const body = { token };
-      fields.forEach((field) => { body[field] = value(field); });
-      try {
-        const button = form.querySelector('button[type="submit"]');
-        button.disabled = true;
-        button.textContent = 'Submitting...';
-        await api('/api/index?path=' + encodeURIComponent('safety-response'), { method: 'POST', body: JSON.stringify(body) });
-        form.classList.add('hidden');
-        showMessage('Thank you. Your Safety Performance response has been submitted.', 'success');
-      } catch (error) {
-        showMessage(error.message || 'Could not submit response.', 'error');
-        const button = form.querySelector('button[type="submit"]');
-        button.disabled = false;
-        button.textContent = 'Submit Response';
-      }
+      Array.from(new FormData(form).entries()).forEach(([key, value]) => body[key] = value);
+      Array.from(form.querySelectorAll('input[type="checkbox"]')).forEach((input) => body[input.name] = input.checked);
+      await apiSafety('', { method: 'POST', body: JSON.stringify(body) });
+      form.style.display = 'none';
+      setMessage('Thank you. Your response has been submitted.', 'ok');
     });
 
     load().catch((error) => {
-      loading.classList.add('hidden');
-      showMessage(error.message || 'Could not load the form.', 'error');
+      setMessage(error.message || 'Could not load this form.', 'error');
     });
   </script>
 </body>
