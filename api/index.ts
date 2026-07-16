@@ -2559,7 +2559,7 @@ function safetyFindPerformanceSearch(payload: any) {
   const searches = safetyArray(payload);
   const employment = searches.filter((row: any) => String(row?.type || '').toUpperCase() === 'EMPLOYMENT_VERIFICATION');
   const safety = employment.find((row: any) => /safety\s*performance|dot\s*verification|safety\s*performance\s*and\s*dot/i.test(`${row?.displayName || ''} ${row?.displayValue || ''}`));
-  return safety || employment[0] || null;
+  return safety || null;
 }
 
 function safetyExtractLivePayload(search: any) {
@@ -2757,6 +2757,255 @@ async function safetyReportsLivePull(req: any, res: any, user: any) {
     report: update.rows[0]
   });
 }
+
+
+// PHASE12A72_AUTO_CREATE_NEW_SAFETY_REPORTS START
+function safetyNumericFileNumber(value: any) {
+  const match = String(value ?? '').match(/\d+/);
+  return match ? Number(match[0]) : 0;
+}
+
+function safetyBuildLiveMessage(extracted: any) {
+  const liveNoteParts = [
+    extracted.searchDisplayName || 'Safety Performance and DOT Verification',
+    extracted.verificationResponse ? `Verification Response: ${extracted.verificationResponse}` : '',
+    extracted.employerType ? `Employer Type: ${extracted.employerType}` : '',
+    extracted.supervisor ? `Supervisor: ${extracted.supervisor}` : ''
+  ].filter(Boolean);
+  return `Live Safety Pull: ${liveNoteParts.join(' | ')}`;
+}
+
+async function safetyCompanyDefaults(companyId: number) {
+  try {
+    const r = await query('select name from companies where id=$1 limit 1', [companyId]);
+    const companyName = safetyCleanText(r.rows[0]?.name || 'Driver Pipeline') || 'Driver Pipeline';
+    return { companyName };
+  } catch {
+    return { companyName: 'Driver Pipeline' };
+  }
+}
+
+async function safetyUpdateExistingReportFromLive(reportId: number, companyId: number, host: string, clientGuid: string, orderGuid: string, safetySearch: any, extracted: any) {
+  const liveMessage = safetyBuildLiveMessage(extracted);
+  const update = await query(
+    `update safety_reports
+     set "applicantName"=coalesce(nullif($1,''), "applicantName"),
+         "prevEmployerName"=coalesce(nullif($2,''), "prevEmployerName"),
+         "prevEmployerEmail"=coalesce(nullif($3,''), "prevEmployerEmail"),
+         "prevEmployerStreet"=coalesce(nullif($4,''), "prevEmployerStreet"),
+         "prevEmployerPhone"=coalesce(nullif($5,''), "prevEmployerPhone"),
+         "prevEmployerCityStateZip"=coalesce(nullif($6,''), "prevEmployerCityStateZip"),
+         "jobTitle"=coalesce(nullif($7,''), "jobTitle"),
+         "fromDate"=coalesce(nullif($8,''), "fromDate"),
+         status=case when status in ('Completed','Emp Complete') then status else 'S1 Complete' end,
+         "tazworksHost"=$9,
+         "tazworksClientGuid"=$10,
+         "tazworksOrderGuid"=$11,
+         "tazworksOrderSearchGuid"=$12,
+         "lastLiveSafetySyncAt"=now(),
+         "lastLiveSafetySyncStatus"='updated',
+         "lastLiveSafetySyncMessage"=$13,
+         "liveSafetyRaw"=$14::jsonb,
+         notes=case when position($13 in coalesce(notes,'')) > 0 then notes else trim(both E'\n' from concat(coalesce(notes,''), E'\n', $13::text)) end,
+         "updatedAt"=now()
+     where id=$15 and "companyId"=$16
+     returning *`,
+    [
+      extracted.applicantName,
+      extracted.prevEmployerName,
+      extracted.prevEmployerEmail,
+      extracted.prevEmployerStreet,
+      extracted.prevEmployerPhone,
+      extracted.prevEmployerCityStateZip,
+      extracted.jobTitle,
+      extracted.fromDate,
+      host,
+      clientGuid,
+      orderGuid,
+      extracted.orderSearchGuid,
+      liveMessage,
+      JSON.stringify(safetySearch || {}),
+      reportId,
+      companyId
+    ]
+  );
+  return update.rows[0];
+}
+
+async function safetyCreateOrUpdateReportFromLive(companyId: number, host: string, clientGuid: string, orderGuid: string, order: any, safetySearch: any, extracted: any) {
+  const fileNumber = safetyCleanText(order.fileNumber || '');
+  if (!fileNumber) throw new Error('Order did not include a file number.');
+
+  const existing = await query(
+    `select id from safety_reports where "companyId"=$1 and trim("fileNumber"::text)=trim($2) order by id desc limit 1`,
+    [companyId, fileNumber]
+  );
+
+  if (existing.rows[0]?.id) {
+    const report = await safetyUpdateExistingReportFromLive(existing.rows[0].id, companyId, host, clientGuid, orderGuid, safetySearch, extracted);
+    return { action: 'updated', report };
+  }
+
+  const defaults = await safetyCompanyDefaults(companyId);
+  const base = cleanReport({
+    applicantName: extracted.applicantName || order.applicantName || '',
+    fileNumber,
+    created: dateOnly(order.orderedDate || order.createdDate || new Date()) || new Date().toISOString().slice(0, 10),
+    status: 'S1 Complete',
+    followUpDate: '',
+    notes: safetyBuildLiveMessage(extracted),
+    prevEmployerName: extracted.prevEmployerName || '',
+    prevEmployerEmail: extracted.prevEmployerEmail || '',
+    prevEmployerStreet: extracted.prevEmployerStreet || '',
+    prevEmployerPhone: extracted.prevEmployerPhone || '',
+    prevEmployerFax: '',
+    prevEmployerCityStateZip: extracted.prevEmployerCityStateZip || '',
+    employerName: defaults.companyName || 'Driver Pipeline',
+    employerAttention: '',
+    employerStreet: '1200 N. Union Bower Road',
+    employerCityStateZip: 'Irving, TX 75061',
+    employerPhone: '972-573-2301',
+    employerFax: '',
+    employerEmail: 'lmercado@driverpipeline.com',
+    confFax: '',
+    confEmail: '',
+    employedByCompany: '',
+    jobTitle: extracted.jobTitle || '',
+    fromDate: extracted.fromDate || '',
+    toDate: '',
+    droveMotorVehicle: '',
+    accidentHistory: '',
+    otherAccidents: '',
+    dotCompany: '',
+    dotEmployee: '',
+    infoReceivedFrom: '',
+    infoReceivedDate: ''
+  }, companyId);
+
+  const placeholders = reportCols.map((_, i) => `$${i + 1}`).join(',');
+  const inserted = await query(`insert into safety_reports (${reportCols.join(',')}) values (${placeholders}) returning id`, reportValues(base));
+  const report = await safetyUpdateExistingReportFromLive(inserted.rows[0].id, companyId, host, clientGuid, orderGuid, safetySearch, extracted);
+  return { action: 'created', report };
+}
+
+async function safetyCacheTazOrder(companyId: number, order: any) {
+  if (!order?.orderGuid) return;
+  try {
+    await query(
+      `insert into tazworks_order_cache (company_id, order_guid, file_number, applicant_name, order_status, order_type, ordered_date, completed_date, client_name, client_code, product_name, requested_by, search_flagged, source_modified_date, raw_order, last_seen_at, last_sync_run_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),null)
+       on conflict (order_guid) do update set company_id=excluded.company_id,file_number=excluded.file_number,applicant_name=excluded.applicant_name,order_status=excluded.order_status,order_type=excluded.order_type,ordered_date=excluded.ordered_date,completed_date=excluded.completed_date,client_name=excluded.client_name,client_code=excluded.client_code,product_name=excluded.product_name,requested_by=excluded.requested_by,search_flagged=excluded.search_flagged,source_modified_date=excluded.source_modified_date,raw_order=excluded.raw_order,last_seen_at=now()`,
+      [companyId, order.orderGuid, order.fileNumber || null, order.applicantName || null, order.orderStatus || null, order.orderType || null, order.orderedDate, order.completedDate, order.clientName || null, order.clientCode || null, order.productName || null, order.requestedBy || null, Boolean(order.searchFlagged), order.modifiedDate || order.createdDate || null, JSON.stringify(order.raw || {})]
+    );
+  } catch {
+    // Cache failure should not stop Safety Performance discovery.
+  }
+}
+
+async function safetyReportsLiveDiscover(req: any, res: any, user: any) {
+  if (!requireAdmin(user, res)) return;
+  if (req.method !== 'POST') return json(res, 405, { status: 'error', message: 'Method not allowed' });
+
+  const body = await readBody(req);
+  const companyId = requestedCompanyId(req, user);
+  const host = safetyCleanText(body.host || body.tazworksHost || '');
+  const clientGuid = safetyCleanText(body.clientGuid || body.tazworksClientGuid || process.env.TAZWORKS_CLIENT_GUID || '');
+  const minFileNumber = Number(body.minFileNumber || 6184);
+  const pageSize = Math.max(5, Math.min(50, Number(body.pageSize || 25)));
+  const maxPages = Math.max(1, Math.min(40, Number(body.maxPages || 20)));
+
+  if (!clientGuid) return json(res, 400, { status: 'error', message: 'Client GUID is required or TAZWORKS_CLIENT_GUID must be set in Vercel.' });
+
+  const summary: any = {
+    minFileNumber,
+    pageSize,
+    maxPages,
+    pagesChecked: 0,
+    ordersPulled: 0,
+    candidatesGreaterThanMin: 0,
+    noSafetySearch: 0,
+    noRecords: 0,
+    created: 0,
+    updated: 0,
+    skippedLowFileNumber: 0,
+    skippedNoOrderGuid: 0,
+    errorsCount: 0,
+    samples: [],
+    errors: []
+  };
+
+  const seen = new Set<string>();
+
+  for (let page = 0; page < maxPages; page++) {
+    const payload = await proxyGet(`/tazworks/orders?page=${page}&size=${pageSize}&clientGuid=${encodeURIComponent(clientGuid)}`);
+    const list = arr(payload);
+    summary.pagesChecked++;
+    summary.ordersPulled += list.length;
+
+    for (const row of list) {
+      const order = orderFrom(row);
+      const orderGuid = safetyCleanText(order.orderGuid || '');
+      const fileNumber = safetyCleanText(order.fileNumber || '');
+      const numericFile = safetyNumericFileNumber(fileNumber);
+      const key = orderGuid || fileNumber;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+
+      if (!orderGuid) {
+        summary.skippedNoOrderGuid++;
+        continue;
+      }
+
+      if (!numericFile || numericFile <= minFileNumber) {
+        summary.skippedLowFileNumber++;
+        continue;
+      }
+
+      summary.candidatesGreaterThanMin++;
+      await safetyCacheTazOrder(companyId, order);
+
+      try {
+        const pulled = await safetyAllSearchResults(orderGuid, clientGuid, host);
+        const safetySearch = safetyFindPerformanceSearch(pulled.payload);
+        if (!safetySearch) {
+          summary.noSafetySearch++;
+          continue;
+        }
+
+        const extracted = safetyExtractLivePayload(safetySearch);
+        if (!extracted) {
+          summary.noRecords++;
+          continue;
+        }
+
+        const result = await safetyCreateOrUpdateReportFromLive(companyId, host, clientGuid, orderGuid, order, safetySearch, extracted);
+        if (result.action === 'created') summary.created++;
+        else summary.updated++;
+
+        if (summary.samples.length < 10) {
+          summary.samples.push({
+            action: result.action,
+            fileNumber,
+            applicantName: result.report?.applicantName || extracted.applicantName || order.applicantName || '',
+            previousEmployer: result.report?.prevEmployerName || extracted.prevEmployerName || '',
+            orderGuid,
+            orderSearchGuid: extracted.orderSearchGuid || ''
+          });
+        }
+      } catch (error: any) {
+        summary.errorsCount++;
+        if (summary.errors.length < 10) summary.errors.push(`${fileNumber || orderGuid}: ${errorMessage(error)}`);
+      }
+    }
+
+    if (list.length < pageSize) break;
+  }
+
+  const message = `Safety discovery completed. Created ${summary.created} new report(s), updated ${summary.updated}, no Safety Performance search on ${summary.noSafetySearch}.`;
+  return json(res, 200, { status: 'ok', message, summary });
+}
+// PHASE12A72_AUTO_CREATE_NEW_SAFETY_REPORTS END
+
 // PHASE12A71_LIVE_SAFETY_PERFORMANCE_PULL END
 
 // PHASE12A70_DUAL_APPLICANT_EMPLOYER_RESPONSE_LINKS START
@@ -3211,6 +3460,7 @@ export default async function handler(req: any, res: any) {
     if (route === 'applicants') return applicants(req, res, user);
     if (route === 'safety-reports') return safetyReports(req, res, user);
     if (route === 'safety-reports/live-pull') return safetyReportsLivePull(req, res, user);
+    if (route === 'safety-reports/live-discover') return safetyReportsLiveDiscover(req, res, user);
     if (route === 'safety-response-link') return safetyResponseLink(req, res, user);
     if (route === 'safety-response-diagnostics') return safetyResponseDiagnostics(req, res, user);
     if (route === 'import-safety-reports') return importSafetyReports(req, res, user);
