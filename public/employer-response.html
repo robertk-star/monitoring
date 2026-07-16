@@ -21,17 +21,19 @@
     * { box-sizing: border-box; }
     body { margin: 0; background: #ffffff; color: var(--ink); font-size: 14px; }
     .page-shell { min-height: 100vh; background: linear-gradient(#ffffff 0%, #ffffff calc(100% - 44px), var(--dark-footer) calc(100% - 44px)); }
-    .page { max-width: 960px; padding: 0 18px 44px; }
+    .page { max-width: 1030px; padding: 0 18px 44px; }
     h1 { margin: 0 0 22px; padding-top: 0; font-size: 36px; line-height: 1.05; font-weight: 800; color: #20272f; letter-spacing: -0.04em; }
     .outer-card { border: 1px solid #ccd4df; border-radius: 6px; background: #fff; padding: 16px; margin-left: 10px; }
     .message { margin: 0 0 14px; }
     .alert { border-radius: 6px; padding: 12px 14px; border: 1px solid; font-weight: 600; }
     .alert.ok { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
     .alert.error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+    .mode-banner { border-radius: 6px; padding: 10px 12px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; margin-bottom: 14px; line-height: 1.4; }
 
     .section { border: 1px solid var(--border); border-radius: 5px; background: var(--panel); margin: 0 0 16px; overflow: hidden; }
     .section-header { background: var(--header-blue); color: #003b73; padding: 14px 20px; font-size: 14px; font-weight: 500; display: flex; justify-content: space-between; align-items: center; }
     .section-body { padding: 28px 20px 26px; }
+    .section.locked .section-body { background: #fbfdff; }
     .chevron { color: #003b73; font-size: 22px; line-height: 1; font-weight: 300; }
     .subhead { font-weight: 700; margin: 0 0 18px; color: #20272f; }
     .subhead.spaced { margin-top: 34px; }
@@ -51,6 +53,7 @@
     .required { color: #d12b2b; }
     input, select, textarea { width: 100%; border: 1px solid var(--border); border-radius: 5px; background: #fff; color: #171c22; font: inherit; padding: 8px 12px; min-height: 36px; }
     input[readonly], textarea[readonly], select:disabled { background: #fff; color: #1f2933; opacity: 1; }
+    .locked input[readonly], .locked textarea[readonly], .locked select:disabled { background: #f8fafc; }
     textarea { min-height: 128px; resize: vertical; line-height: 1.45; }
     .notes-large { min-height: 128px; }
     .other-accidents { min-height: 128px; max-width: 430px; }
@@ -67,6 +70,11 @@
     .check-line input { width: 14px; height: 14px; min-height: auto; padding: 0; margin: 0; }
     .vehicle-box { margin-top: 6px; }
     .vehicle-title, .dot-title { font-weight: 700; margin: 0 0 8px; }
+
+    .signature-box { border: 1px solid var(--border); border-radius: 7px; background: #f8fbff; padding: 14px; margin-top: 10px; }
+    .signature-input { font-family: "Brush Script MT", "Segoe Script", cursive; font-size: 25px; min-height: 48px; }
+    .signature-readonly { font-family: "Brush Script MT", "Segoe Script", cursive; font-size: 28px; border-bottom: 1px solid #9ca3af; min-height: 42px; display: flex; align-items: center; padding: 3px 2px; }
+    .signature-meta { color: #4b5563; font-size: 12px; margin-top: 7px; }
 
     .accident-table-wrap { margin-top: 26px; max-width: 880px; overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; }
@@ -93,13 +101,14 @@
       <h1>Safety Performance Submission</h1>
       <section class="outer-card">
         <div id="message" class="message"></div>
+        <div id="modeBanner" class="mode-banner" style="display:none;"></div>
 
         <form id="form" style="display:none;">
-          <section class="section">
+          <section id="section1" class="section">
             <div class="section-header"><span>SECTION 1: To be Completed by Prospective Employee</span><span class="chevron">⌃</span></div>
             <div class="section-body">
               <div class="grid three">
-                <label class="field">Applicant Name <span class="required">*</span><input name="applicantName" readonly /></label>
+                <label class="field">Applicant Name <span class="required">*</span><input name="applicantName" data-role="applicant" /></label>
                 <label class="field">File Number<input name="fileNumber" readonly /></label>
                 <label class="field">Status<select name="status" disabled><option></option><option>S1 Complete</option><option>Emp Sent</option><option>Emp Complete</option><option>Completed</option></select></label>
               </div>
@@ -110,135 +119,150 @@
 
               <label class="field wide" style="margin-top:28px;">Notes<textarea name="notes" class="notes-large" readonly></textarea></label>
 
-              <div class="btn-bar"><button type="submit" class="primary-btn full">Save Form</button></div>
+              <div class="btn-bar"><button type="submit" class="primary-btn full" id="topSaveBtn">Save Form</button></div>
 
               <p class="subhead">Previous Employer</p>
               <div class="grid two">
-                <label class="field">Name<input name="prevEmployerName" readonly /></label>
-                <label class="field">Email<input name="prevEmployerEmail" readonly /></label>
+                <label class="field">Name<input name="prevEmployerName" data-role="applicant" /></label>
+                <label class="field">Email<input name="prevEmployerEmail" data-role="applicant" /></label>
               </div>
 
               <div class="grid prev-address" style="margin-top:34px;">
-                <label class="field">Previous Employer Street<input name="prevEmployerStreet" readonly /></label>
-                <label class="field">Previous Employer Phone<input name="prevEmployerPhone" readonly /></label>
-                <label class="field">Previous Employer Fax<input name="prevEmployerFax" readonly /></label>
+                <label class="field">Previous Employer Street<input name="prevEmployerStreet" data-role="applicant" /></label>
+                <label class="field">Previous Employer Phone<input name="prevEmployerPhone" data-role="applicant" /></label>
+                <label class="field">Previous Employer Fax<input name="prevEmployerFax" data-role="applicant" /></label>
               </div>
 
               <div class="grid two" style="margin-top:34px;">
-                <label class="field">Previous Employer City/State/Zip<input name="prevEmployerCityStateZip" readonly /></label>
+                <label class="field">Previous Employer City/State/Zip<input name="prevEmployerCityStateZip" data-role="applicant" /></label>
               </div>
 
               <p class="subhead spaced">Prospective Employer</p>
               <div class="grid two">
-                <label class="field">Name<input name="employerName" readonly /></label>
-                <label class="field">Attention<input name="employerAttention" readonly /></label>
+                <label class="field">Name<input name="employerName" data-role="applicant" /></label>
+                <label class="field">Attention<input name="employerAttention" data-role="applicant" /></label>
               </div>
 
               <div class="grid two" style="margin-top:34px;">
-                <label class="field">Street<input name="employerStreet" readonly /></label>
-                <label class="field">City/State/Zip<input name="employerCityStateZip" readonly /></label>
+                <label class="field">Street<input name="employerStreet" data-role="applicant" /></label>
+                <label class="field">City/State/Zip<input name="employerCityStateZip" data-role="applicant" /></label>
               </div>
 
               <div class="grid employer-contact" style="margin-top:34px;">
-                <label class="field">Phone<input name="employerPhone" readonly /></label>
-                <label class="field">Fax<input name="employerFax" readonly /></label>
-                <label class="field">Employer Email<input name="employerEmail" readonly /></label>
+                <label class="field">Phone<input name="employerPhone" data-role="applicant" /></label>
+                <label class="field">Fax<input name="employerFax" data-role="applicant" /></label>
+                <label class="field">Employer Email<input name="employerEmail" data-role="applicant" /></label>
               </div>
 
               <div class="grid two" style="margin-top:34px;">
-                <label class="field">Confidential Fax<input name="confFax" readonly /></label>
-                <label class="field">Confidential Email<input name="confEmail" readonly /></label>
+                <label class="field">Confidential Fax<input name="confFax" data-role="applicant" /></label>
+                <label class="field">Confidential Email<input name="confEmail" data-role="applicant" /></label>
               </div>
 
-              <p class="signature-title">Check this box to verify your name above as your signature.</p>
-              <label class="check-line"><input type="checkbox" name="signatureConfirmed" /> I verify the name above as my signature for this document.</label>
+              <p class="signature-title">Electronic Applicant Signature</p>
+              <div id="signatureEntry" class="signature-box">
+                <label class="field">Type your full legal name as your electronic signature
+                  <input class="signature-input" name="signatureName" autocomplete="name" placeholder="Type full name here" />
+                </label>
+                <div class="small-muted">By typing your name and submitting, you verify the Section 1 information above and apply your electronic signature to this document.</div>
+              </div>
+              <div id="signatureDisplay" class="signature-box" style="display:none;">
+                <div class="small-muted">Applicant electronic signature</div>
+                <div class="signature-readonly" id="signatureNameDisplay">—</div>
+                <div class="signature-meta" id="signatureMetaDisplay"></div>
+              </div>
             </div>
           </section>
 
-          <section class="section">
+          <section id="section2" class="section">
             <div class="section-header"><span>SECTION 2: To be Completed by Previous Employer</span><span class="chevron">⌃</span></div>
             <div class="section-body">
               <p class="subhead">To Be Completed By Previous Employer</p>
               <label class="field" style="max-width:430px;">Was the applicant employed or used by your company?
-                <select name="employedByCompany"><option value=""></option><option>Yes</option><option>No</option></select>
+                <select name="employedByCompany" data-role="employer"><option value=""></option><option>Yes</option><option>No</option></select>
               </label>
 
               <div class="grid section-two" style="margin-top:34px;">
-                <label class="field">Job Title<input name="jobTitle" /></label>
-                <label class="field">From Date<input name="fromDate" type="date" /></label>
-                <label class="field">To Date<input name="toDate" type="date" /></label>
+                <label class="field">Job Title<input name="jobTitle" data-role="employer" /></label>
+                <label class="field">From Date<input name="fromDate" type="date" data-role="employer" /></label>
+                <label class="field">To Date<input name="toDate" type="date" data-role="employer" /></label>
               </div>
 
               <div class="grid dot-grid" style="margin-top:34px;">
                 <label class="field">Did they drive a motor vehicle?
-                  <select name="droveMotorVehicle"><option value=""></option><option>Yes</option><option>No</option></select>
+                  <select name="droveMotorVehicle" data-role="employer"><option value=""></option><option>Yes</option><option>No</option></select>
                 </label>
+
                 <div class="vehicle-box">
                   <p class="vehicle-title">Types of Vehicles Operated</p>
-                  <label class="check-line"><input type="checkbox" name="vehicleStraightTruck" /> Straight Truck</label>
-                  <label class="check-line"><input type="checkbox" name="vehicleTractorSemitrailer" /> Tractor-Semitrailer</label>
-                  <label class="check-line"><input type="checkbox" name="vehicleBus" /> Bus</label>
-                  <label class="check-line"><input type="checkbox" name="vehicleCargoTank" /> Cargo Tank</label>
-                  <label class="check-line"><input type="checkbox" name="vehicleDoublesTriples" /> Doubles/Triples</label>
-                  <label class="check-line"><input type="checkbox" name="vehicleOther" /> Other</label>
+                  <label class="check-line"><input type="checkbox" name="vehicleStraightTruck" data-role="employer" /> Straight Truck</label>
+                  <label class="check-line"><input type="checkbox" name="vehicleTractorSemitrailer" data-role="employer" /> Tractor-Semitrailer</label>
+                  <label class="check-line"><input type="checkbox" name="vehicleBus" data-role="employer" /> Bus</label>
+                  <label class="check-line"><input type="checkbox" name="vehicleCargoTank" data-role="employer" /> Cargo Tank</label>
+                  <label class="check-line"><input type="checkbox" name="vehicleDoublesTriples" data-role="employer" /> Doubles/Triples</label>
+                  <label class="check-line"><input type="checkbox" name="vehicleOther" data-role="employer" /> Other</label>
                 </div>
               </div>
             </div>
           </section>
 
-          <section class="section">
+          <section id="section3" class="section">
             <div class="section-header"><span>SECTION 3: Accident History (Previous Employer)</span><span class="chevron">⌃</span></div>
             <div class="section-body">
               <label class="field" style="max-width:430px;">Is there accident history for this driver?
-                <select name="accidentHistory"><option value=""></option><option>No accidents reported</option><option>Accidents reported</option><option>Accidents reported below</option></select>
+                <select name="accidentHistory" data-role="employer"><option value=""></option><option>No accidents reported</option><option>Accidents reported</option></select>
               </label>
 
               <div class="accident-table-wrap">
                 <table>
                   <thead><tr><th>Date</th><th>Location</th><th>Injuries</th><th>Fatalities</th><th>Hazmat Spill</th></tr></thead>
                   <tbody>
-                    <tr><td><input name="accidentDate1" type="date" /></td><td><input name="accidentLocation1" /></td><td><input name="accidentInjuries1" /></td><td><input name="accidentFatalities1" /></td><td><input name="accidentHazmat1" /></td></tr>
-                    <tr><td><input name="accidentDate2" type="date" /></td><td><input name="accidentLocation2" /></td><td><input name="accidentInjuries2" /></td><td><input name="accidentFatalities2" /></td><td><input name="accidentHazmat2" /></td></tr>
-                    <tr><td><input name="accidentDate3" type="date" /></td><td><input name="accidentLocation3" /></td><td><input name="accidentInjuries3" /></td><td><input name="accidentFatalities3" /></td><td><input name="accidentHazmat3" /></td></tr>
+                    <tr><td><input name="accidentDate1" type="date" data-role="employer" /></td><td><input name="accidentLocation1" data-role="employer" /></td><td><input name="accidentInjuries1" data-role="employer" /></td><td><input name="accidentFatalities1" data-role="employer" /></td><td><input name="accidentHazmat1" data-role="employer" /></td></tr>
+                    <tr><td><input name="accidentDate2" type="date" data-role="employer" /></td><td><input name="accidentLocation2" data-role="employer" /></td><td><input name="accidentInjuries2" data-role="employer" /></td><td><input name="accidentFatalities2" data-role="employer" /></td><td><input name="accidentHazmat2" data-role="employer" /></td></tr>
+                    <tr><td><input name="accidentDate3" type="date" data-role="employer" /></td><td><input name="accidentLocation3" data-role="employer" /></td><td><input name="accidentInjuries3" data-role="employer" /></td><td><input name="accidentFatalities3" data-role="employer" /></td><td><input name="accidentHazmat3" data-role="employer" /></td></tr>
                   </tbody>
                 </table>
               </div>
 
-              <label class="field" style="margin-top:28px;">Other accidents (reported to agencies or insurers)<textarea name="otherAccidents" class="other-accidents"></textarea></label>
+              <label class="field" style="margin-top:28px;">Other accidents (reported to agencies or insurers)<textarea name="otherAccidents" class="other-accidents" data-role="employer"></textarea></label>
             </div>
           </section>
 
-          <section class="section">
+          <section id="section4" class="section">
             <div class="section-header"><span>SECTION 4: DOT Release of Information — Previous Employer</span><span class="chevron">⌃</span></div>
             <div class="section-body">
               <div class="grid dot-grid">
                 <label class="field">Is your company subject to DOT-regulated testing?
-                  <select name="dotSubjectToTesting"><option value=""></option><option>Yes</option><option>No</option><option>Not sure</option></select>
+                  <select name="dotCompany" data-role="employer"><option value=""></option><option>Yes</option><option>No</option></select>
                 </label>
+
                 <div>
                   <p class="dot-title">In the past 2 or 3 years, has the employee:</p>
-                  <label class="check-line"><input type="checkbox" name="dotAlcoholTestPositive" /> Alcohol test result ≥ 0.04</label>
-                  <label class="check-line"><input type="checkbox" name="dotDrugTestPositive" /> Verified positive drug test</label>
-                  <label class="check-line"><input type="checkbox" name="dotRefusedTest" /> Refused to be tested</label>
-                  <label class="check-line"><input type="checkbox" name="dotOtherViolations" /> Other DOT violations</label>
-                  <label class="check-line"><input type="checkbox" name="dotPriorReportedViolation" /> Prior employer reported violation</label>
-                  <label class="check-line"><input type="checkbox" name="dotCompletedReturnToDuty" /> Completed return-to-duty process</label>
+                  <label class="check-line"><input type="checkbox" name="dotAlcoholTestPositive" data-role="employer" /> Alcohol test result ≥ 0.04</label>
+                  <label class="check-line"><input type="checkbox" name="dotDrugTestPositive" data-role="employer" /> Verified positive drug test</label>
+                  <label class="check-line"><input type="checkbox" name="dotRefusedTest" data-role="employer" /> Refused to be tested</label>
+                  <label class="check-line"><input type="checkbox" name="dotOtherViolations" data-role="employer" /> Other DOT violations</label>
+                  <label class="check-line"><input type="checkbox" disabled /> Prior employer reported violation</label>
+                  <label class="check-line"><input type="checkbox" disabled /> Completed return-to-duty process</label>
+                  <div class="small-muted">The last two visual items are shown for document clarity. They are not saved unless database fields are added later.</div>
                 </div>
               </div>
             </div>
           </section>
 
-          <section class="section">
+          <section id="section5" class="section">
             <div class="section-header"><span>SECTION 5: Information Received</span><span class="chevron">⌃</span></div>
             <div class="section-body">
-              <label class="field full-width">Information Received From<input name="infoReceivedFrom" /></label>
-              <label class="field full-width" style="margin-top:18px;">Information Received Date<input name="infoReceivedDate" type="date" /></label>
+              <div class="grid two">
+                <label class="field">Information Received From<input name="infoReceivedFrom" data-role="employer" /></label>
+                <label class="field">Information Received Date<input name="infoReceivedDate" type="date" data-role="employer" /></label>
+              </div>
             </div>
           </section>
 
           <div class="btn-row">
-            <button type="submit" class="primary-btn">Save</button>
-            <button type="submit" class="secondary-btn">Email / Fax / Send</button>
+            <button type="submit" class="primary-btn" id="bottomSaveBtn">Save</button>
+            <button type="button" class="secondary-btn" id="emailFaxBtn">Email / Fax / Send</button>
           </div>
         </form>
       </section>
@@ -246,73 +270,139 @@
   </main>
 
   <script>
-    const token = new URLSearchParams(location.search).get('token') || '';
-    const message = document.getElementById('message');
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
     const form = document.getElementById('form');
+    const message = document.getElementById('message');
+    const modeBanner = document.getElementById('modeBanner');
+    const boolFields = new Set(['vehicleStraightTruck','vehicleTractorSemitrailer','vehicleBus','vehicleCargoTank','vehicleDoublesTriples','vehicleOther','dotAlcoholTestPositive','dotDrugTestPositive','dotRefusedTest','dotOtherViolations']);
+    const dateFields = new Set(['followUpDate','fromDate','toDate','accidentDate1','accidentDate2','accidentDate3','infoReceivedDate']);
+    let responseRole = 'employer';
 
-    function setMessage(text, cls) {
-      if (!text) { message.innerHTML = ''; return; }
-      message.innerHTML = '<div class="alert ' + cls + '">' + text + '</div>';
+    function show(type, text) {
+      message.innerHTML = text ? `<div class="alert ${type}">${text}</div>` : '';
     }
 
-    async function api(url, options) {
-      const response = await fetch(url, Object.assign({}, options || {}, { headers: { 'Content-Type': 'application/json' } }));
+    function apiPath(pathSuffix) {
+      const safeSuffix = pathSuffix || '';
+      if (safeSuffix.startsWith('?')) return '/api/index?path=' + encodeURIComponent('safety-response') + '&' + safeSuffix.slice(1);
+      if (safeSuffix.startsWith('&')) return '/api/index?path=' + encodeURIComponent('safety-response') + safeSuffix;
+      return '/api/index?path=' + encodeURIComponent('safety-response') + safeSuffix;
+    }
+
+    async function request(method, body) {
+      const options = { method, headers: { 'Content-Type': 'application/json' } };
+      if (body) options.body = JSON.stringify(body);
+      const response = await fetch(method === 'GET' ? apiPath('?token=' + encodeURIComponent(token)) : apiPath(''), options);
       const raw = await response.text();
       let data = {};
-      try { data = raw ? JSON.parse(raw) : {}; } catch {}
-      if (!response.ok) throw new Error(data.message || raw || 'Request failed');
+      try { data = raw ? JSON.parse(raw) : {}; } catch { throw new Error('Server returned non-JSON response.'); }
+      if (!response.ok) throw new Error(data.message || 'Request failed.');
       return data;
     }
 
-    async function apiSafety(pathSuffix, options) {
-      const newUrl = '/api/index?path=' + encodeURIComponent('safety-response') + pathSuffix;
-      try {
-        return await api(newUrl, options);
-      } catch (firstError) {
-        const oldUrl = '/api/safety-response' + pathSuffix.replace(/^&/, '?');
-        try { return await api(oldUrl, options); } catch {}
-        throw firstError;
-      }
+    function normalizeDate(value) {
+      if (!value) return '';
+      const str = String(value).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+      const d = new Date(str);
+      if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+      return str;
     }
 
-    function fillForm(report) {
-      Object.entries(report || {}).forEach(([key, value]) => {
-        const field = form.elements[key];
-        if (!field) return;
-        if (field.type === 'checkbox') field.checked = Boolean(value);
-        else field.value = value || '';
+    function setValue(name, value) {
+      const el = form.elements[name];
+      if (!el) return;
+      if (boolFields.has(name)) el.checked = value === true || String(value).toLowerCase() === 'true';
+      else el.value = dateFields.has(name) ? normalizeDate(value) : (value ?? '');
+    }
+
+    function collect() {
+      const out = { token };
+      Array.from(form.elements).forEach((el) => {
+        if (!el.name) return;
+        if (el.type === 'checkbox') out[el.name] = el.checked;
+        else out[el.name] = el.value;
       });
+      return out;
+    }
+
+    function applyRoleLocks() {
+      const isApplicant = responseRole === 'applicant';
+      document.getElementById('section1').classList.toggle('locked', !isApplicant);
+      ['section2','section3','section4','section5'].forEach((id) => document.getElementById(id).classList.toggle('locked', isApplicant));
+
+      Array.from(form.querySelectorAll('[data-role="applicant"]')).forEach((el) => {
+        if (el.tagName === 'SELECT') el.disabled = !isApplicant;
+        else el.readOnly = !isApplicant;
+      });
+      Array.from(form.querySelectorAll('[data-role="employer"]')).forEach((el) => {
+        if (el.type === 'checkbox' || el.tagName === 'SELECT') el.disabled = isApplicant;
+        else el.readOnly = isApplicant;
+      });
+
+      const signatureEntry = document.getElementById('signatureEntry');
+      const signatureDisplay = document.getElementById('signatureDisplay');
+      signatureEntry.style.display = isApplicant ? '' : 'none';
+      signatureDisplay.style.display = isApplicant ? 'none' : '';
+
+      document.getElementById('topSaveBtn').textContent = isApplicant ? 'Save and Sign Applicant Section' : 'Save Form';
+      document.getElementById('bottomSaveBtn').textContent = isApplicant ? 'Save and Sign' : 'Save';
+      document.getElementById('emailFaxBtn').style.display = isApplicant ? 'none' : '';
+
+      modeBanner.style.display = '';
+      modeBanner.innerHTML = isApplicant
+        ? '<b>Applicant verification link:</b> Please review Section 1, correct the applicant/employer information if needed, then type your full legal name to sign electronically.'
+        : '<b>Employer response link:</b> Section 1 is locked after applicant verification. Please complete Sections 2–5 and save the form.';
+    }
+
+    function applySignature(signature) {
+      const sig = signature || {};
+      document.getElementById('signatureNameDisplay').textContent = sig.name || 'No applicant signature on file yet.';
+      document.getElementById('signatureMetaDisplay').textContent = sig.signedAt ? `Signed ${new Date(sig.signedAt).toLocaleString()}` : '';
     }
 
     async function load() {
-      if (!token) throw new Error('Missing secure form token.');
-      setMessage('Loading secure form...', 'ok');
-      const data = await apiSafety('&token=' + encodeURIComponent(token));
-      fillForm(data.report || {});
-      form.style.display = '';
-      setMessage('', 'ok');
+      if (!token) {
+        show('error', 'Missing secure response token.');
+        return;
+      }
+      try {
+        show('ok', 'Loading form...');
+        const data = await request('GET');
+        const report = data.report || {};
+        responseRole = data.responseRole || 'employer';
+        Object.keys(report).forEach((key) => setValue(key, report[key]));
+        applySignature(report.applicantSignature);
+        applyRoleLocks();
+        form.style.display = '';
+        show('', '');
+      } catch (error) {
+        show('error', error.message || 'Could not load this form.');
+      }
     }
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const submitButtons = form.querySelectorAll('button[type="submit"]');
-      submitButtons.forEach((button) => button.disabled = true);
+      const payload = collect();
+      if (responseRole === 'applicant' && !String(payload.signatureName || '').trim()) {
+        show('error', 'Please type your full legal name as your electronic signature before saving.');
+        return;
+      }
       try {
-        const body = { token };
-        Array.from(new FormData(form).entries()).forEach(([key, value]) => body[key] = value);
-        Array.from(form.querySelectorAll('input[type="checkbox"]')).forEach((input) => body[input.name] = input.checked);
-        await apiSafety('', { method: 'POST', body: JSON.stringify(body) });
-        form.style.display = 'none';
-        setMessage('Thank you. Your response has been submitted.', 'ok');
+        show('ok', 'Saving...');
+        await request('POST', payload);
+        show('ok', responseRole === 'applicant' ? 'Applicant section saved and electronically signed. SaffHire can now send the employer response link.' : 'Employer response saved. Thank you.');
       } catch (error) {
-        setMessage(error.message || 'Could not submit this form.', 'error');
-        submitButtons.forEach((button) => button.disabled = false);
+        show('error', error.message || 'Could not save this form.');
       }
     });
 
-    load().catch((error) => {
-      setMessage(error.message || 'Could not load this form.', 'error');
+    document.getElementById('emailFaxBtn').addEventListener('click', () => {
+      window.print();
     });
+
+    load();
   </script>
 </body>
 </html>

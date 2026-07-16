@@ -130,13 +130,14 @@
     }
   }
 
-  async function generateLink(row) {
+  async function generateLink(row, responseRole) {
     const data = rowData(row);
     if (!data.fileNumber) return toast('Could not find the file number for this report.', true);
 
     const payload = {
       companyId: getCompanyId(),
-      fileNumber: data.fileNumber
+      fileNumber: data.fileNumber,
+      responseRole
     };
 
     const result = await apiWithFallback('safety-response-link', {
@@ -147,12 +148,28 @@
     const link = result.formUrl;
     if (!link) return toast('The app did not return a form link.', true);
 
-    showLinkModal(row, link, data, result.expiresAt);
+    showLinkModal(row, link, data, result.expiresAt, responseRole);
   }
 
-  function buildRequestDraft(link, data) {
-    const subject = `Safety Performance Form Request${data.fileNumber ? ` - File #${data.fileNumber}` : ''}`;
-    const body = [
+  function buildRequestDraft(link, data, responseRole) {
+    const isApplicant = responseRole === 'applicant';
+    const subject = isApplicant
+      ? `Applicant Safety Performance Verification${data.fileNumber ? ` - File #${data.fileNumber}` : ''}`
+      : `Safety Performance Form Request${data.fileNumber ? ` - File #${data.fileNumber}` : ''}`;
+    const body = isApplicant ? [
+      'Hello,',
+      '',
+      'SaffHire Background Screening needs you to review the Safety Performance form information below.',
+      '',
+      `Applicant: ${data.applicant || '[Applicant Name]'}`,
+      data.fileNumber ? `File Number: ${data.fileNumber}` : '',
+      '',
+      'Please use this secure link to verify the previous employer / prospective employer information and sign electronically:',
+      link,
+      '',
+      'Thank you,',
+      'SaffHire Background Screening'
+    ].filter(Boolean).join('\n') : [
       'Hello,',
       '',
       'SaffHire Background Screening is requesting Safety Performance information for the applicant listed below.',
@@ -169,13 +186,15 @@
       'SaffHire Background Screening'
     ].filter(Boolean).join('\n');
 
+    const to = isApplicant ? '' : (data.employerEmail || '');
+
     return {
-      to: data.employerEmail || '',
+      to,
       subject,
       body,
-      full: `To: ${data.employerEmail || '[enter employer email]'}\nSubject: ${subject}\n\n${body}`,
+      full: `To: ${to || (isApplicant ? '[enter applicant email]' : '[enter employer email]')}\nSubject: ${subject}\n\n${body}`,
       gmailUrl: 'https://mail.google.com/mail/?view=cm&fs=1'
-        + `&to=${encodeURIComponent(data.employerEmail || '')}`
+        + `&to=${encodeURIComponent(to)}`
         + `&su=${encodeURIComponent(subject)}`
         + `&body=${encodeURIComponent(body)}`
     };
@@ -191,11 +210,11 @@
     modal.innerHTML = `
       <div class="phase6-modal-card">
         <div class="phase6-modal-head">
-          <h2>Secure Employer Response Link</h2>
+          <h2 data-phase6-title>Secure Response Link</h2>
           <button type="button" data-phase6-close>×</button>
         </div>
         <div class="phase6-link-box">
-          <span>Secure response URL</span>
+          <span data-phase6-link-label>Secure response URL</span>
           <textarea data-phase6-link rows="3" readonly></textarea>
         </div>
         <div class="phase6-link-meta" data-phase6-meta></div>
@@ -205,20 +224,27 @@
           <button type="button" data-phase6-open-form>Open Form</button>
           <button type="button" data-phase6-open-gmail>Open Gmail</button>
         </div>
-        <p class="phase6-note">The employer can complete this form without logging in. The link expires automatically.</p>
+        <p class="phase6-note" data-phase6-note>The link can be opened without logging in. The link expires automatically.</p>
       </div>
     `;
     document.body.appendChild(modal);
     return modal;
   }
 
-  function showLinkModal(row, link, data, expiresAt) {
+  function showLinkModal(row, link, data, expiresAt, responseRole) {
     const modal = getModal();
     modal.__link = link;
     modal.__data = data;
     modal.__row = row;
+    modal.__responseRole = responseRole || 'employer';
+    const isApplicant = modal.__responseRole === 'applicant';
+    modal.querySelector('[data-phase6-title]').textContent = isApplicant ? 'Secure Applicant Verification Link' : 'Secure Employer Response Link';
+    modal.querySelector('[data-phase6-link-label]').textContent = isApplicant ? 'Applicant verification URL' : 'Employer response URL';
     modal.querySelector('[data-phase6-link]').value = link;
     modal.querySelector('[data-phase6-meta]').textContent = expiresAt ? `Expires: ${new Date(expiresAt).toLocaleString()}` : 'Expires in 14 days.';
+    modal.querySelector('[data-phase6-note]').textContent = isApplicant
+      ? 'Send this link to the applicant first. After the applicant signs, generate/send the employer response link.'
+      : 'Send this link to the previous employer after the applicant has verified and signed Section 1.';
     modal.classList.remove('hidden');
   }
 
@@ -233,7 +259,7 @@
     const headerRow = table.querySelector('thead tr');
     if (headerRow) {
       const th = document.createElement('th');
-      th.textContent = 'Response Link';
+      th.textContent = 'Response Links';
       headerRow.appendChild(th);
     }
 
@@ -253,18 +279,34 @@
       Array.from(table.querySelectorAll('tbody tr')).forEach((row) => {
         const cells = Array.from(row.children);
         const actionCell = cells[actionIndex] || cells[cells.length - 1];
-        if (!actionCell || actionCell.querySelector('.phase6-link-button')) return;
+        if (!actionCell || actionCell.querySelector('.phase6-link-group')) return;
 
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'phase6-link-button';
-        button.textContent = 'Response Link';
-        button.addEventListener('click', (event) => {
+        const group = document.createElement('div');
+        group.className = 'phase6-link-group';
+
+        const applicantButton = document.createElement('button');
+        applicantButton.type = 'button';
+        applicantButton.className = 'phase6-link-button applicant';
+        applicantButton.textContent = 'Applicant Link';
+        applicantButton.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
-          generateLink(row).catch((error) => toast(error.message || 'Could not generate link.', true));
+          generateLink(row, 'applicant').catch((error) => toast(error.message || 'Could not generate applicant link.', true));
         });
-        actionCell.appendChild(button);
+
+        const employerButton = document.createElement('button');
+        employerButton.type = 'button';
+        employerButton.className = 'phase6-link-button employer';
+        employerButton.textContent = 'Employer Link';
+        employerButton.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          generateLink(row, 'employer').catch((error) => toast(error.message || 'Could not generate employer link.', true));
+        });
+
+        group.appendChild(applicantButton);
+        group.appendChild(employerButton);
+        actionCell.appendChild(group);
       });
     });
   }
@@ -280,8 +322,8 @@
     panel.id = 'phase6-panel';
     panel.className = 'card wide-card phase6-panel';
     panel.innerHTML = `
-      <h2>Employer Response Form</h2>
-      <p>Use <b>Response Link</b> to create a secure form link for a previous employer. When they submit the form, the answers save back to the Safety Performance report and the status changes to <b>Emp Complete</b>.</p>
+      <h2>Applicant + Employer Response Forms</h2>
+      <p>Use <b>Applicant Link</b> first so the applicant can verify Section 1 and sign electronically. Then use <b>Employer Link</b> to send the signed form to the previous employer so they can complete Sections 2–5.</p>
     `;
     if (after) after.insertAdjacentElement('afterend', panel);
   }
@@ -293,8 +335,10 @@
     style.textContent = `
       .phase6-panel { margin-bottom: 16px; padding: 16px; border-left: 5px solid #16a34a; }
       .phase6-panel h2 { margin: 0 0 8px; }
-      .phase6-link-button { border: 1px solid #16a34a; background: #f0fdf4; color: #166534; border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 900; margin-top: 8px; cursor: pointer; }
-      .phase6-link-button:hover { background: #dcfce7; }
+      .phase6-link-group { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+      .phase6-link-button { border: 1px solid #16a34a; background: #f0fdf4; color: #166534; border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 900; cursor: pointer; white-space: nowrap; }
+      .phase6-link-button.applicant { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; }
+      .phase6-link-button:hover { filter: brightness(.97); }
       .phase6-toast { position: fixed; right: 18px; bottom: 18px; z-index: 10004; background: #111827; color: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 18px 45px rgba(15,23,42,.25); font-size: 14px; max-width: 520px; }
       .phase6-toast.danger { background: #991b1b; }
       .phase6-modal { position: fixed; inset: 0; z-index: 10003; background: rgba(15,23,42,.55); display: flex; align-items: center; justify-content: center; padding: 18px; }
@@ -321,20 +365,21 @@
     const modal = getModal();
     const link = modal.__link;
     const data = modal.__data || {};
-    const draft = link ? buildRequestDraft(link, data) : null;
+    const responseRole = modal.__responseRole || 'employer';
+    const draft = link ? buildRequestDraft(link, data, responseRole) : null;
 
     if (event.target && event.target.closest && event.target.closest('[data-phase6-copy-link]')) {
       if (link) copyText(link, 'Response link copied.');
     }
     if (event.target && event.target.closest && event.target.closest('[data-phase6-copy-draft]')) {
-      if (draft) copyText(draft.full, 'Employer form email draft copied.');
+      if (draft) copyText(draft.full, responseRole === 'applicant' ? 'Applicant verification email draft copied.' : 'Employer form email draft copied.');
     }
     if (event.target && event.target.closest && event.target.closest('[data-phase6-open-form]')) {
       if (link) window.open(link, '_blank', 'noopener,noreferrer');
     }
     if (event.target && event.target.closest && event.target.closest('[data-phase6-open-gmail]')) {
       if (!draft) return;
-      copyText(draft.full, 'Employer form email draft copied.');
+      copyText(draft.full, responseRole === 'applicant' ? 'Applicant verification email draft copied.' : 'Employer form email draft copied.');
       window.open(draft.gmailUrl, '_blank', 'noopener,noreferrer');
     }
   });
