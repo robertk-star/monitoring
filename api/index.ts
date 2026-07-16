@@ -2913,6 +2913,7 @@ async function safetyReportsLiveDiscover(req: any, res: any, user: any) {
   const minFileNumber = Number(body.minFileNumber || 6184);
   const pageSize = Math.max(5, Math.min(50, Number(body.pageSize || 25)));
   const maxPages = Math.max(1, Math.min(40, Number(body.maxPages || 20)));
+  const stopAtMinFileNumber = body.stopAtMinFileNumber !== false;
 
   if (!clientGuid) return json(res, 400, { status: 'error', message: 'Client GUID is required or TAZWORKS_CLIENT_GUID must be set in Vercel.' });
 
@@ -2928,6 +2929,8 @@ async function safetyReportsLiveDiscover(req: any, res: any, user: any) {
     created: 0,
     updated: 0,
     skippedLowFileNumber: 0,
+    stoppedAtMinFileNumber: false,
+    stoppedAtFileNumber: '',
     skippedNoOrderGuid: 0,
     errorsCount: 0,
     samples: [],
@@ -2941,6 +2944,7 @@ async function safetyReportsLiveDiscover(req: any, res: any, user: any) {
     const list = arr(payload);
     summary.pagesChecked++;
     summary.ordersPulled += list.length;
+    let pageHitMinBoundary = false;
 
     for (const row of list) {
       const order = orderFrom(row);
@@ -2958,6 +2962,12 @@ async function safetyReportsLiveDiscover(req: any, res: any, user: any) {
 
       if (!numericFile || numericFile <= minFileNumber) {
         summary.skippedLowFileNumber++;
+        if (stopAtMinFileNumber && numericFile && numericFile <= minFileNumber) {
+          summary.stoppedAtMinFileNumber = true;
+          summary.stoppedAtFileNumber = fileNumber;
+          pageHitMinBoundary = true;
+          break;
+        }
         continue;
       }
 
@@ -2998,10 +3008,12 @@ async function safetyReportsLiveDiscover(req: any, res: any, user: any) {
       }
     }
 
+    if (pageHitMinBoundary) break;
     if (list.length < pageSize) break;
   }
 
-  const message = `Safety discovery completed. Created ${summary.created} new report(s), updated ${summary.updated}, no Safety Performance search on ${summary.noSafetySearch}.`;
+  const stopMessage = summary.stoppedAtMinFileNumber ? ` Stopped at file/order ${summary.stoppedAtFileNumber || minFileNumber}.` : '';
+  const message = `Safety refresh completed. Created ${summary.created} new report(s), updated ${summary.updated}, no Safety Performance search on ${summary.noSafetySearch}.${stopMessage}`;
   return json(res, 200, { status: 'ok', message, summary });
 }
 // PHASE12A72_AUTO_CREATE_NEW_SAFETY_REPORTS END
