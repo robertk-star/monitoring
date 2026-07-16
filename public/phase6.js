@@ -151,6 +151,41 @@
     showLinkModal(row, link, data, result.expiresAt, responseRole);
   }
 
+
+  async function pullLiveSafety(row) {
+    const data = rowData(row);
+    if (!data.fileNumber) return toast('Could not find the file number for this report.', true);
+
+    const savedHost = localStorage.getItem('phase12a71-taz-host') || '';
+    const host = window.prompt('TazWorks host from Postman URL. Leave blank if your proxy already has the host configured.', savedHost);
+    if (host === null) return;
+    localStorage.setItem('phase12a71-taz-host', host.trim());
+
+    const savedClientGuid = localStorage.getItem('phase12a71-client-guid') || '';
+    const clientGuid = window.prompt('Client GUID. Leave blank to use Vercel ENV TAZWORKS_CLIENT_GUID.', savedClientGuid);
+    if (clientGuid === null) return;
+    localStorage.setItem('phase12a71-client-guid', clientGuid.trim());
+
+    const orderGuid = window.prompt('Order GUID from TazWorks/Postman. Leave blank only if this file was already matched during TazWorks sync.', '');
+    if (orderGuid === null) return;
+
+    toast('Pulling live Safety Performance information...');
+
+    const result = await apiWithFallback('safety-reports/live-pull', {
+      method: 'POST',
+      body: JSON.stringify({
+        companyId: getCompanyId(),
+        fileNumber: data.fileNumber,
+        host: host.trim(),
+        clientGuid: clientGuid.trim(),
+        orderGuid: orderGuid.trim()
+      })
+    });
+
+    toast(result.message || (result.found ? 'Live Safety Performance information saved.' : 'No Safety Performance search found.'));
+    setTimeout(() => window.location.reload(), 900);
+  }
+
   function buildRequestDraft(link, data, responseRole) {
     const isApplicant = responseRole === 'applicant';
     const subject = isApplicant
@@ -304,8 +339,19 @@
           generateLink(row, 'employer').catch((error) => toast(error.message || 'Could not generate employer link.', true));
         });
 
+        const liveButton = document.createElement('button');
+        liveButton.type = 'button';
+        liveButton.className = 'phase6-link-button live';
+        liveButton.textContent = 'Pull Live Info';
+        liveButton.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          pullLiveSafety(row).catch((error) => toast(error.message || 'Could not pull live Safety Performance information.', true));
+        });
+
         group.appendChild(applicantButton);
         group.appendChild(employerButton);
+        group.appendChild(liveButton);
         actionCell.appendChild(group);
       });
     });
@@ -323,7 +369,7 @@
     panel.className = 'card wide-card phase6-panel';
     panel.innerHTML = `
       <h2>Applicant + Employer Response Forms</h2>
-      <p>Use <b>Applicant Link</b> first so the applicant can verify Section 1 and sign electronically. Then use <b>Employer Link</b> to send the signed form to the previous employer so they can complete Sections 2–5.</p>
+      <p>Use <b>Pull Live Info</b> to pull Safety Performance details from TazWorks All Search Results. Then use <b>Applicant Link</b> first so the applicant can verify Section 1 and sign electronically. Finally use <b>Employer Link</b> to send the signed form to the previous employer so they can complete Sections 2–5.</p>
     `;
     if (after) after.insertAdjacentElement('afterend', panel);
   }
@@ -338,6 +384,7 @@
       .phase6-link-group { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
       .phase6-link-button { border: 1px solid #16a34a; background: #f0fdf4; color: #166534; border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 900; cursor: pointer; white-space: nowrap; }
       .phase6-link-button.applicant { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; }
+      .phase6-link-button.live { border-color: #f59e0b; background: #fffbeb; color: #92400e; }
       .phase6-link-button:hover { filter: brightness(.97); }
       .phase6-toast { position: fixed; right: 18px; bottom: 18px; z-index: 10004; background: #111827; color: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 18px 45px rgba(15,23,42,.25); font-size: 14px; max-width: 520px; }
       .phase6-toast.danger { background: #991b1b; }
