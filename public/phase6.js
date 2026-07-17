@@ -188,6 +188,27 @@
     });
   }
 
+
+  function phase12a88RemoveFollowUpColumn() {
+    safetyTables().forEach((table) => {
+      let idx = indexes(table);
+      while (idx.followUp >= 0) {
+        const headers = Array.from(table.querySelectorAll('thead th'));
+        const header = headers[idx.followUp];
+        if (header) header.remove();
+        Array.from(table.querySelectorAll('tbody tr')).forEach((row) => {
+          if (row.children && row.children[idx.followUp]) row.children[idx.followUp].remove();
+        });
+        idx = indexes(table);
+      }
+      if (table.dataset.phase6SortKey === 'followUp') {
+        table.dataset.phase6ManualSort = '0';
+        table.dataset.phase6SortKey = 'file';
+        table.dataset.phase6SortDirection = 'desc';
+      }
+    });
+  }
+
   function makeSafetyTablesSortable() {
     safetyTables().forEach((table) => {
       const idx = indexes(table);
@@ -196,7 +217,6 @@
         ['applicant', idx.applicant],
         ['created', idx.created],
         ['status', idx.status],
-        ['followUp', idx.followUp],
         ['employer', idx.employer]
       ].filter(([, index]) => index >= 0);
 
@@ -1361,6 +1381,9 @@
     phase12a85EnsureStatusOptions();
     phase12a85CleanSectionTitles();
 
+    const followUpField = phase12a85FindField('Follow Up Date');
+    if (followUpField) followUpField.classList.add('phase12a88-hide-follow-up');
+
     const applicantInput = phase12a85FindInput('Applicant Name');
     const statusSelect = phase12a85FindInput('Status');
     const notesField = phase12a85FindField('Notes');
@@ -1429,7 +1452,7 @@
       .phase12a85-signature-card.warning .phase12a85-signature-icon { background: #fef3c7; }
       @media(max-width:900px){ .phase12a85-edit-page .page-header, .phase12a85-response-style-form { max-width: 100%; } .phase12a85-signature-card { flex-direction: column; } }
 
-      .phase12a87-hide-form-notes { display: none !important; }
+      .phase12a87-hide-form-notes, .phase12a88-hide-follow-up { display: none !important; }
       .phase12a87-note-box { min-width: 220px; max-width: 360px; }
       .phase12a87-note-list { display: grid; gap: 8px; margin-bottom: 8px; }
       .phase12a87-note-item { border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; padding: 8px 9px; }
@@ -1612,6 +1635,7 @@
     startLegacyButtonObserver();
     addPanel();
     removeLegacySafetyButtons();
+    phase12a88RemoveFollowUpColumn();
     addButtons();
     phase12a87EnhanceNotes();
     removeLegacySafetyButtons();
