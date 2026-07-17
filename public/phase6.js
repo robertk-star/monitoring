@@ -218,6 +218,26 @@
     });
   }
 
+
+
+  function ensureSafetyStatusOptions() {
+    if (!isSafetyPage()) return;
+    const wanted = ['Consent Needed', 'Consent Given', 'S1 Complete', 'Emp Sent', 'Emp Complete', 'Completed'];
+    document.querySelectorAll('select').forEach((select) => {
+      const optionTexts = Array.from(select.options || []).map((option) => text(option));
+      const looksLikeStatusSelect = optionTexts.some((label) => wanted.includes(label));
+      if (!looksLikeStatusSelect) return;
+      wanted.forEach((label) => {
+        if (!optionTexts.includes(label)) {
+          const option = document.createElement('option');
+          option.value = label;
+          option.textContent = label;
+          select.appendChild(option);
+        }
+      });
+    });
+  }
+
   async function api(url, options) {
     const response = await fetch(url, Object.assign({ credentials: 'include' }, options || {}, {
       headers: Object.assign({ 'Content-Type': 'application/json' }, (options && options.headers) || {})
@@ -1097,6 +1117,8 @@
       [data-phase6-open-gmail] { background: #ea4335 !important; }
       [data-phase6-open-form] { background: #16a34a !important; }
       .phase6-note { margin: 12px 0 0; color: #64748b; font-size: 13px; }
+      .status-chip.consent-needed { background: #fff7ed !important; color: #c2410c !important; }
+      .status-chip.consent-given { background: #ecfdf5 !important; color: #047857 !important; }
       th[data-phase6-sortable] { cursor: pointer; user-select: none; }
       th[data-phase6-sortable]:hover { background: #eef2ff; color: #111827; }
       .phase6-sort-head { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -1187,6 +1209,7 @@
     removeLegacySafetyButtons();
     addButtons();
     removeLegacySafetyButtons();
+    ensureSafetyStatusOptions();
     makeSafetyTablesSortable();
     hookSafetyRefreshButton();
   }
