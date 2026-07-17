@@ -737,6 +737,29 @@
     return table.querySelectorAll('thead th').length - 1;
   }
 
+
+
+  function removeLegacySafetyButtons() {
+    const removeLabels = new Set([
+      'pdf',
+      'email',
+      'copy',
+      'open gmail',
+      'final packet',
+      'copy client draft'
+    ]);
+
+    safetyTables().forEach((table) => {
+      Array.from(table.querySelectorAll('button, a')).forEach((el) => {
+        const label = text(el).replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!label) return;
+        if (removeLabels.has(label)) {
+          el.remove();
+        }
+      });
+    });
+  }
+
   function addButtons() {
     safetyTables().forEach((table) => {
       const actionIndex = ensureActionColumn(table);
@@ -1126,7 +1149,9 @@
     }
     if (!isSafetyPage()) return;
     addPanel();
+    removeLegacySafetyButtons();
     addButtons();
+    removeLegacySafetyButtons();
     makeSafetyTablesSortable();
     hookSafetyRefreshButton();
   }
