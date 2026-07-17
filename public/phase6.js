@@ -61,9 +61,16 @@
     };
   }
 
+  let phase12a80EmailSettingsActive = false;
+  let phase12a80CompanyId = '';
+
   function getCompanyId() {
     const select = document.querySelector('.company-switcher select');
-    return select && select.value ? select.value : '1';
+    if (select && select.value) {
+      phase12a80CompanyId = select.value;
+      return select.value;
+    }
+    return phase12a80CompanyId || '1';
   }
 
   function cellValue(row, index) {
@@ -801,17 +808,11 @@
 
 
 
-  // PHASE12A79_EMAIL_TEMPLATE_SETTINGS_UI START
-  function addEmailSettingsPage() {
-    if (!isSettingsPage()) return;
-    if (document.getElementById('phase12a79-email-settings')) return;
-    const anchor = Array.from(document.querySelectorAll('.settings-card, .card.wide-card')).pop() || document.querySelector('.main-panel') || document.body;
-    const panel = document.createElement('section');
-    panel.id = 'phase12a79-email-settings';
-    panel.className = 'card wide-card settings-card phase12a79-settings-card';
-    panel.innerHTML = `
+  // PHASE12A80_EMAIL_SETTINGS_PAGE START
+  function emailSettingsPanelMarkup() {
+    return `
       <h2>Email Settings</h2>
-      <p class="muted">Create reusable fax/email templates. Use <b>{{applicantName}}</b> to pull in the applicant's name. You can also use <b>{{fileNumber}}</b>, <b>{{previousEmployer}}</b>, <b>{{recipientName}}</b>, and <b>{{today}}</b>.</p>
+      <p class="muted">Create reusable fax/email templates. Use <b>{{applicantName}}</b> to pull in the applicant's name. You can also use <b>{{fileNumber}}</b>, <b>{{previousEmployer}}</b>, <b>{{recipientName}}</b>, <b>{{faxNumber}}</b>, and <b>{{today}}</b>.</p>
       <div class="phase12a79-template-form">
         <label><span>Template Name</span><input data-phase12a79-new-name placeholder="Example: FMCSA Fax Cover" /></label>
         <label><span>Subject</span><input data-phase12a79-new-subject placeholder="FMCSA Safety Performance Report - {{applicantName}}" /></label>
@@ -820,6 +821,75 @@
       </div>
       <div data-phase12a79-list class="phase12a79-template-list"><p class="muted">Loading templates...</p></div>
     `;
+  }
+
+  function ensureEmailSettingsNav() {
+    const nav = document.querySelector('.sidebar nav');
+    if (!nav) return;
+    let button = nav.querySelector('[data-phase12a80-email-settings-nav]');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'nav-btn phase12a80-email-nav';
+      button.setAttribute('data-phase12a80-email-settings-nav', '1');
+      button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg> Email Settings';
+      button.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        renderEmailSettingsPage();
+      });
+      nav.appendChild(button);
+    }
+    setEmailSettingsNavActive(phase12a80EmailSettingsActive);
+  }
+
+  function setEmailSettingsNavActive(active) {
+    const emailButton = document.querySelector('[data-phase12a80-email-settings-nav]');
+    if (!emailButton) return;
+    if (active) {
+      document.querySelectorAll('.sidebar .nav-btn').forEach((button) => button.classList.remove('active'));
+      emailButton.classList.add('active');
+    } else {
+      emailButton.classList.remove('active');
+    }
+  }
+
+  function removeEmbeddedEmailSettingsCard() {
+    if (phase12a80EmailSettingsActive) return;
+    const card = document.getElementById('phase12a79-email-settings');
+    if (card && isSettingsPage()) card.remove();
+  }
+
+  function renderEmailSettingsPage() {
+    const main = document.querySelector('.main-panel') || document.querySelector('main') || document.body;
+    if (!main) return;
+    getCompanyId();
+    phase12a80EmailSettingsActive = true;
+    setEmailSettingsNavActive(true);
+    main.innerHTML = `
+      <div class="page-header phase12a80-email-page-header">
+        <div>
+          <h1>Email Settings</h1>
+          <p>Create and manage reusable subject/body templates for faxing FMCSA reports.</p>
+        </div>
+      </div>
+      <section id="phase12a79-email-settings" class="card wide-card settings-card phase12a79-settings-card phase12a80-email-settings-page">
+        ${emailSettingsPanelMarkup()}
+      </section>
+    `;
+    loadTemplateSettings().catch((error) => toast(error.message || 'Could not load email templates.', true));
+  }
+  // PHASE12A80_EMAIL_SETTINGS_PAGE END
+
+  // PHASE12A79_EMAIL_TEMPLATE_SETTINGS_UI START
+  function addEmailSettingsPage() {
+    if (!isSettingsPage()) return;
+    if (document.getElementById('phase12a79-email-settings')) return;
+    const anchor = Array.from(document.querySelectorAll('.settings-card, .card.wide-card')).pop() || document.querySelector('.main-panel') || document.body;
+    const panel = document.createElement('section');
+    panel.id = 'phase12a79-email-settings';
+    panel.className = 'card wide-card settings-card phase12a79-settings-card';
+    panel.innerHTML = emailSettingsPanelMarkup();
     anchor.insertAdjacentElement('afterend', panel);
     loadTemplateSettings().catch((error) => toast(error.message || 'Could not load email templates.', true));
   }
@@ -948,6 +1018,10 @@
       .phase12a79-row-actions { margin-top: 10px; display: flex; justify-content: flex-end; gap: 8px; }
       .phase12a79-row-actions .danger { background: #dc2626; }
       .phase12a79-fax-card select { width: 100%; border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px 12px; font: inherit; }
+
+      .phase12a80-email-nav svg { flex: 0 0 auto; }
+      .phase12a80-email-page-header p { margin: 6px 0 0; color: #6b7280; }
+      .phase12a80-email-settings-page { padding: 22px; }
       @media(max-width:900px){ .phase12a79-template-form, .phase12a79-row-grid { grid-template-columns: 1fr; } }
       .phase6-link-button:hover { filter: brightness(.97); }
       .phase6-toast { position: fixed; right: 18px; bottom: 18px; z-index: 10004; background: #111827; color: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 18px 45px rgba(15,23,42,.25); font-size: 14px; max-width: 520px; }
@@ -973,6 +1047,14 @@
     `;
     document.head.appendChild(style);
   }
+
+  document.addEventListener('click', function (event) {
+    const otherNav = event.target && event.target.closest && event.target.closest('.sidebar .nav-btn:not([data-phase12a80-email-settings-nav])');
+    if (otherNav) {
+      phase12a80EmailSettingsActive = false;
+      setEmailSettingsNavActive(false);
+    }
+  }, true);
 
   document.addEventListener('click', function (event) {
     if (event.target && event.target.closest && event.target.closest('[data-phase6-close]')) closeModal();
@@ -1035,7 +1117,13 @@
 
   function refresh() {
     addStyles();
-    if (isSettingsPage()) addEmailSettingsPage();
+    ensureEmailSettingsNav();
+    removeEmbeddedEmailSettingsCard();
+    if (phase12a80EmailSettingsActive) {
+      setEmailSettingsNavActive(true);
+      if (!document.getElementById('phase12a79-email-settings')) renderEmailSettingsPage();
+      return;
+    }
     if (!isSafetyPage()) return;
     addPanel();
     addButtons();
