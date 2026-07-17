@@ -251,6 +251,124 @@
     }
   }
 
+
+  // PHASE12A78_EFAX_FAX_MODAL START
+  function defaultFaxCoverMessage(data) {
+    return [
+      data.employer ? `Attention: ${data.employer}` : '',
+      '',
+      'Please see the attached FMCSA Safety Performance report.',
+      '',
+      `Applicant: ${data.applicant || 'N/A'}`,
+      data.fileNumber ? `File Number: ${data.fileNumber}` : '',
+      '',
+      'Thank you,',
+      'SaffHire Background Screening'
+    ].filter((line, index, arr) => line || arr[index - 1] !== '').join('\n').trim();
+  }
+
+  function getFaxModal() {
+    let modal = document.getElementById('phase12a78-fax-modal');
+    if (modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'phase12a78-fax-modal';
+    modal.className = 'phase6-modal hidden';
+    modal.innerHTML = `
+      <div class="phase6-modal-card phase12a78-fax-card">
+        <div class="phase6-modal-head">
+          <h2>Fax FMCSA Report</h2>
+          <button type="button" data-phase12a78-close>×</button>
+        </div>
+        <p class="phase6-note" data-phase12a78-summary></p>
+        <label class="phase12a78-field">
+          <span>Recipient fax number</span>
+          <input data-phase12a78-fax-number placeholder="Example: 9725551234" inputmode="tel" />
+        </label>
+        <label class="phase12a78-field">
+          <span>Recipient / Company</span>
+          <input data-phase12a78-recipient-name placeholder="Previous employer or contact name" />
+        </label>
+        <label class="phase12a78-field">
+          <span>Fax cover message</span>
+          <textarea data-phase12a78-cover-message rows="8"></textarea>
+        </label>
+        <div class="phase6-modal-actions">
+          <button type="button" data-phase12a78-close class="phase12a78-secondary">Cancel</button>
+          <button type="button" data-phase12a78-send>Send Fax</button>
+        </div>
+        <p class="phase6-note">This sends the completed FMCSA PDF to eFax by email. eFax will handle the actual fax delivery and confirmation.</p>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function showFaxModal(row) {
+    const data = rowData(row);
+    if (!data.fileNumber) return toast('Could not find the file number for this report.', true);
+    const modal = getFaxModal();
+    modal.__row = row;
+    modal.__data = data;
+    modal.querySelector('[data-phase12a78-summary]').textContent = `File #${data.fileNumber} — ${data.applicant || 'Applicant not listed'}`;
+    modal.querySelector('[data-phase12a78-fax-number]').value = '';
+    modal.querySelector('[data-phase12a78-recipient-name]').value = data.employer || '';
+    modal.querySelector('[data-phase12a78-cover-message]').value = defaultFaxCoverMessage(data);
+    modal.classList.remove('hidden');
+    setTimeout(() => modal.querySelector('[data-phase12a78-fax-number]')?.focus(), 50);
+  }
+
+  function closeFaxModal() {
+    getFaxModal().classList.add('hidden');
+  }
+
+  function normalizeFax(value) {
+    return String(value || '').replace(/[^0-9]/g, '');
+  }
+
+  async function sendFaxFromModal() {
+    const modal = getFaxModal();
+    const data = modal.__data || {};
+    const faxNumber = normalizeFax(modal.querySelector('[data-phase12a78-fax-number]')?.value || '');
+    const recipientName = String(modal.querySelector('[data-phase12a78-recipient-name]')?.value || '').trim();
+    const coverMessage = String(modal.querySelector('[data-phase12a78-cover-message]')?.value || '').trim();
+    const sendButton = modal.querySelector('[data-phase12a78-send]');
+
+    if (!data.fileNumber) return toast('Could not find the file number for this report.', true);
+    if (faxNumber.length < 7) return toast('Enter a valid recipient fax number.', true);
+
+    const confirmed = window.confirm(`Send the FMCSA report for file #${data.fileNumber} to fax number ${faxNumber}?`);
+    if (!confirmed) return;
+
+    const originalText = sendButton ? sendButton.textContent : '';
+    if (sendButton) {
+      sendButton.disabled = true;
+      sendButton.textContent = 'Sending...';
+    }
+
+    try {
+      const result = await apiWithFallback('safety-reports/fax-fmcsa', {
+        method: 'POST',
+        body: JSON.stringify({
+          companyId: getCompanyId(),
+          fileNumber: data.fileNumber,
+          faxNumber,
+          recipientName,
+          coverMessage
+        })
+      });
+      toast(result.message || 'Fax sent to eFax.');
+      closeFaxModal();
+    } catch (error) {
+      toast(error.message || 'Could not send fax.', true);
+    } finally {
+      if (sendButton) {
+        sendButton.disabled = false;
+        sendButton.textContent = originalText || 'Send Fax';
+      }
+    }
+  }
+  // PHASE12A78_EFAX_FAX_MODAL END
+
   async function generateLink(row, responseRole) {
     const data = rowData(row);
     if (!data.fileNumber) return toast('Could not find the file number for this report.', true);
@@ -554,8 +672,19 @@
           generateLink(row, 'employer').catch((error) => toast(error.message || 'Could not generate employer link.', true));
         });
 
+        const faxButton = document.createElement('button');
+        faxButton.type = 'button';
+        faxButton.className = 'phase6-link-button fax';
+        faxButton.textContent = 'Fax FMCSA';
+        faxButton.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          showFaxModal(row);
+        });
+
         group.appendChild(applicantButton);
         group.appendChild(employerButton);
+        group.appendChild(faxButton);
         actionCell.appendChild(group);
       });
     });
@@ -575,6 +704,7 @@
       <h2>Applicant + Employer Response Forms</h2>
       <p>The page <b>Refresh</b> button now checks live TazWorks orders, looks for file numbers greater than <b>6184</b>, and automatically creates or updates Safety Performance reports when Safety Performance and DOT Verification information is found.</p>
       <p>Each report keeps the same workflow: send the <b>Applicant Link</b> first so the applicant can verify Section 1 and sign electronically. Then send the <b>Employer Link</b> to the previous employer so they can complete Sections 2–5.</p>
+      <p>Use <b>Fax FMCSA</b> when a completed FMCSA Safety Performance report needs to be sent through eFax.</p>
     `;
     if (after) after.insertAdjacentElement('afterend', panel);
   }
@@ -592,6 +722,12 @@
       .phase6-link-group { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
       .phase6-link-button { border: 1px solid #16a34a; background: #f0fdf4; color: #166534; border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 900; cursor: pointer; white-space: nowrap; }
       .phase6-link-button.applicant { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; }
+      .phase6-link-button.fax { border-color: #7c3aed; background: #f5f3ff; color: #5b21b6; }
+      .phase12a78-field { display: block; margin: 12px 0; }
+      .phase12a78-field span { display: block; font-size: 12px; font-weight: 900; color: #475569; margin: 0 0 5px; }
+      .phase12a78-field input, .phase12a78-field textarea { width: 100%; border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px 12px; font: inherit; }
+      .phase12a78-secondary { background: #64748b !important; }
+      .phase12a78-fax-card [data-phase12a78-send]:disabled { opacity: .6; cursor: wait; }
       .phase6-link-button:hover { filter: brightness(.97); }
       .phase6-toast { position: fixed; right: 18px; bottom: 18px; z-index: 10004; background: #111827; color: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 18px 45px rgba(15,23,42,.25); font-size: 14px; max-width: 520px; }
       .phase6-toast.danger { background: #991b1b; }
@@ -619,6 +755,14 @@
 
   document.addEventListener('click', function (event) {
     if (event.target && event.target.closest && event.target.closest('[data-phase6-close]')) closeModal();
+
+    if (event.target && event.target.closest && event.target.closest('[data-phase12a78-close]')) closeFaxModal();
+    if (event.target && event.target.closest && event.target.closest('[data-phase12a78-send]')) {
+      event.preventDefault();
+      event.stopPropagation();
+      sendFaxFromModal();
+      return;
+    }
 
     const modal = getModal();
     const link = modal.__link;
