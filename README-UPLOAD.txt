@@ -1,16 +1,13 @@
-Phase 12A-94 — Fax Through Gmail SMTP
+Phase 12A-95 — Fax via Gmail Compose
 
-Upload only these files:
-- api/index.ts
-- package.json
+Upload only:
+- public/phase6.js
 
-Then add these Vercel ENV variables:
-- FAX_SMTP_HOST=smtp.gmail.com
-- FAX_SMTP_PORT=465
-- FAX_SMTP_SECURE=true
-- FAX_SMTP_USER=robertk@saffhire.com
-- FAX_SMTP_PASS=<Google app password>
-- FAX_FROM=robertk@saffhire.com
-- EFAX_SEND_DOMAIN=efaxsend.com
+What changed:
+- Fax FMCSA no longer sends through Resend/eFax server-side.
+- Fax FMCSA now downloads the completed FMCSA PDF and opens Gmail with the eFax address, subject, and body filled in.
+- You must attach the downloaded PDF in Gmail before sending.
+- Uses efaxsend.com by default, with an editable eFax domain field in the fax popup.
 
-No SQL changes are required.
+No SQL changes.
+No Vercel ENV changes.
