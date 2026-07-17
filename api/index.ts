@@ -4,11 +4,6 @@ import { jwtVerify, SignJWT } from 'jose';
 import fs from 'fs';
 import path from 'path';
 
-// PHASE12A82_FAX_STABILITY START
-// Give the consolidated API route more time for PDF generation + eFax email delivery.
-export const config = { maxDuration: 60 };
-// PHASE12A82_FAX_STABILITY END
-
 const { Pool } = pg;
 let pool: any;
 const SESSION_COOKIE = 'saffhire_session';
