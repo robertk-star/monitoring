@@ -260,6 +260,97 @@ async function notificationEmails(req: any, res: any, user: any) {
   return json(res, 405, { status: 'error', message: 'Method not allowed' });
 }
 
+
+// PHASE12A79_EMAIL_TEMPLATE_SETTINGS START
+function emailTemplateType(value: any) {
+  const raw = String(value || 'fax').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  return raw || 'fax';
+}
+
+function renderTemplateText(input: any, report: any, extra: any = {}) {
+  const applicantName = pdfClean(report?.applicantName) || '';
+  const fileNumber = pdfClean(report?.fileNumber) || '';
+  const previousEmployer = pdfClean(report?.prevEmployerName) || '';
+  const prospectiveEmployer = pdfClean(report?.employerName) || '';
+  const recipientName = pdfClean(extra?.recipientName) || previousEmployer;
+  const faxNumber = pdfClean(extra?.faxNumber) || '';
+  const today = new Date().toISOString().slice(0, 10);
+  const values: Record<string, string> = {
+    applicantName,
+    applicant: applicantName,
+    fileNumber,
+    previousEmployer,
+    prevEmployer: previousEmployer,
+    employer: previousEmployer,
+    prospectiveEmployer,
+    recipientName,
+    recipient: recipientName,
+    faxNumber,
+    today,
+    date: today,
+  };
+  return String(input || '').replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_match, key) => values[String(key)] ?? '');
+}
+
+async function emailTemplates(req: any, res: any, user: any) {
+  if (!requireAdmin(user, res)) return;
+  const url = new URL(req.url || '/', 'https://local.test');
+  const companyId = requestedCompanyId(req, user);
+  const type = emailTemplateType(url.searchParams.get('type') || 'fax');
+
+  if (req.method === 'GET') {
+    const result = await query(
+      'select id, "companyId", type, name, subject, body, "isActive", "createdAt", "updatedAt" from email_templates where "companyId"=$1 and type=$2 order by name asc, id asc',
+      [companyId, type]
+    );
+    return json(res, 200, { status: 'ok', templates: result.rows });
+  }
+
+  const body = await readBody(req);
+  const nextType = emailTemplateType(body.type || type);
+
+  if (req.method === 'POST') {
+    const name = String(body.name || '').trim();
+    const subject = String(body.subject || '').trim();
+    const templateBody = String(body.body ?? body.emailBody ?? '').trim();
+    if (!name) return json(res, 400, { status: 'error', message: 'Template name is required' });
+    if (!subject) return json(res, 400, { status: 'error', message: 'Template subject is required' });
+    if (!templateBody) return json(res, 400, { status: 'error', message: 'Template body is required' });
+    const result = await query(
+      'insert into email_templates ("companyId", type, name, subject, body, "isActive") values ($1,$2,$3,$4,$5,$6) returning id, "companyId", type, name, subject, body, "isActive", "createdAt", "updatedAt"',
+      [companyId, nextType, name, subject, templateBody, body.isActive !== false]
+    );
+    return json(res, 200, { status: 'ok', template: result.rows[0] });
+  }
+
+  if (req.method === 'PATCH') {
+    const id = Number(body.id);
+    if (!id) return json(res, 400, { status: 'error', message: 'Template id is required' });
+    const name = String(body.name || '').trim();
+    const subject = String(body.subject || '').trim();
+    const templateBody = String(body.body ?? body.emailBody ?? '').trim();
+    if (!name) return json(res, 400, { status: 'error', message: 'Template name is required' });
+    if (!subject) return json(res, 400, { status: 'error', message: 'Template subject is required' });
+    if (!templateBody) return json(res, 400, { status: 'error', message: 'Template body is required' });
+    const result = await query(
+      'update email_templates set type=$1, name=$2, subject=$3, body=$4, "isActive"=$5, "updatedAt"=now() where id=$6 and "companyId"=$7 returning id, "companyId", type, name, subject, body, "isActive", "createdAt", "updatedAt"',
+      [nextType, name, subject, templateBody, body.isActive !== false, id, companyId]
+    );
+    if (!result.rows[0]) return json(res, 404, { status: 'error', message: 'Template not found' });
+    return json(res, 200, { status: 'ok', template: result.rows[0] });
+  }
+
+  if (req.method === 'DELETE') {
+    const id = Number(url.searchParams.get('id') || body.id || 0);
+    if (!id) return json(res, 400, { status: 'error', message: 'Template id is required' });
+    await query('delete from email_templates where id=$1 and "companyId"=$2', [id, companyId]);
+    return json(res, 200, { status: 'ok', success: true });
+  }
+
+  return json(res, 405, { status: 'error', message: 'Method not allowed' });
+}
+// PHASE12A79_EMAIL_TEMPLATE_SETTINGS END
+
 async function importApplicants(req: any, res: any, user: any) {
   if (!requireAdmin(user, res)) return; if (req.method !== 'POST') return json(res, 405, { status: 'error', message: 'Method not allowed' }); const body = await readBody(req); const companyId = Number(body.companyId || user.companyId || 1); const rows = Array.isArray(body.rows) ? body.rows : []; let imported = 0, skipped = 0; for (const row of rows) { const fileNumber = String(pick(row, ['fileNumber','File Number','File #','FileNumber','file_number'])).trim(); if (!fileNumber) { skipped++; continue; } const medExpire = String(pick(row, ['medExpire','Med Expire','Medical Expiration','medicalExpiration'])).trim(); await query('insert into applicants ("companyId","fileNumber","applicantName","orderDate","monitorStatus","mvrStatus","medExpire","medExpireOverridden",notes) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict ("fileNumber","companyId") do update set "applicantName"=excluded."applicantName","orderDate"=excluded."orderDate","monitorStatus"=excluded."monitorStatus","mvrStatus"=excluded."mvrStatus","medExpire"=excluded."medExpire","medExpireOverridden"=excluded."medExpireOverridden",notes=excluded.notes,"updatedAt"=now()', [companyId, fileNumber, String(pick(row, ['name','Name','Applicant Name','applicantName'])).trim(), String(pick(row, ['orderDate','Order Date','Created','created'])).trim(), normalizeMonitorStatus(pick(row, ['monitorStatus','Monitor Status','Monitoring','monitoring'])), String(pick(row, ['mvrStatus','MVR Status','Status'])).trim(), medExpire || null, Boolean(medExpire), String(pick(row, ['notes','Notes'])).trim()]); imported++; } return json(res, 200, { status: 'ok', imported, skipped });
 }
@@ -682,11 +773,29 @@ async function safetyReportsFaxFmcsa(req: any, res: any, user: any) {
   const report = result.rows[0];
   if (!report) return json(res, 404, { status: 'error', message: 'Safety Performance report not found' });
 
+  let selectedTemplate: any = null;
+  const templateId = Number(body.templateId || body.emailTemplateId || 0);
+  if (templateId) {
+    try {
+      const templateResult = await query(
+        'select id, name, subject, body from email_templates where id=$1 and "companyId"=$2 and "isActive"=true limit 1',
+        [templateId, companyId]
+      );
+      selectedTemplate = templateResult.rows[0] || null;
+    } catch {
+      // Template lookup should not prevent faxing if the table has not been added yet.
+      selectedTemplate = null;
+    }
+  }
+
   const bytes = await buildCompletedSafetyPdf(report);
   const safeFile = String(report.fileNumber || report.id || 'safety-performance').replace(/[^0-9A-Za-z_-]/g, '') || 'safety-performance';
   const filename = `fmcsa-safety-performance-${safeFile}.pdf`;
-  const subject = `FMCSA Safety Performance Report${report.fileNumber ? ` - File #${report.fileNumber}` : ''}`;
-  const text = String(body.coverMessage || '').trim() || defaultFaxCoverMessage(report, recipientName);
+  const defaultSubject = `FMCSA Safety Performance Report${report.fileNumber ? ` - File #${report.fileNumber}` : ''}`;
+  const subjectRaw = String(body.subject || body.emailSubject || selectedTemplate?.subject || defaultSubject).trim() || defaultSubject;
+  const textRaw = String(body.coverMessage || body.body || selectedTemplate?.body || '').trim() || defaultFaxCoverMessage(report, recipientName);
+  const subject = renderTemplateText(subjectRaw, report, { recipientName, faxNumber: recipientFaxDigits });
+  const text = renderTemplateText(textRaw, report, { recipientName, faxNumber: recipientFaxDigits });
   const fromEmail = faxFromEmail();
   const replyToEmail = faxReplyToEmail();
 
@@ -3730,6 +3839,7 @@ export default async function handler(req: any, res: any) {
     if (route === 'import-safety-reports') return importSafetyReports(req, res, user);
     if (route === 'users') return users(req, res, user);
     if (route === 'notification-emails') return notificationEmails(req, res, user);
+    if (route === 'email-templates') return emailTemplates(req, res, user);
     if (route === 'import-applicants') return importApplicants(req, res, user);
     if (route === 'change-password') return changePassword(req, res, user);
     if (route === 'tazworks-sync/run') return tazworksSyncRun(req, res, user);
