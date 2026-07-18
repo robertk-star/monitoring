@@ -4089,7 +4089,7 @@ async function safetyResponseLink(req: any, res: any, user: any) {
     .sign(secret());
 
   const origin = req.headers.origin || `https://${req.headers.host}`;
-  const formUrl = `${origin}/employer-response.html?token=${encodeURIComponent(token)}`;
+  const formUrl = `${origin}/employer-response.html?token=${encodeURIComponent(token)}&role=${encodeURIComponent(responseRole)}`;
 
   return json(res, 200, {
     status: 'ok',
