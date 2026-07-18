@@ -1,22 +1,31 @@
-# Phase 12A-119 — FMCSA Applicant Signature PDF Fix
+# Phase 12A-120 — Client Portal Review + User Admin
 
-Upload only:
+Upload these files:
 
 - `api/index.ts`
+- `public/client-login.html`
+- `public/client-portal.html`
+- `supabase/migrations/20260718_phase12a120_client_portal_roles.sql`
 
-## What changed
+## SQL
+Run the migration file in Supabase if the `local_users.role` column has not already been changed to support client roles.
 
-- The applicant electronic signature now prints on the FMCSA PDF in a cursive-style font.
-- The applicant signing timestamp now prints beside the signature as an electronic signature stamp.
-- The applicant Date field is filled only with the actual applicant signature date.
-- The PDF no longer draws the applicant date twice, which was causing the date to look like it was written over another date.
+The migration is safe to run more than once.
 
-## SQL / ENV
+## What to test
 
-- SQL migration: No
-- Vercel ENV changes: No
+1. Go to `/client-login.html`.
+2. Log in as a user assigned to a company.
+3. Confirm Dashboard loads.
+4. Confirm Monitoring loads only that company’s records.
+5. Confirm Safety Reports loads only that company’s reports.
+6. Log in as `client_admin`.
+7. Confirm User Admin appears.
+8. Add a client user.
+9. Reset that user’s password.
+10. Deactivate/reactivate that user.
+11. Confirm a normal `client_user` does not see User Admin.
+12. Confirm a `viewer` cannot edit Monitoring.
 
-## Checks
-
-- `npm run build` passed.
-- `npx tsc --noEmit` passed.
+## ENV
+No new Vercel environment variables are needed.
