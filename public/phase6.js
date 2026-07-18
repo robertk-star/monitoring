@@ -1355,6 +1355,14 @@
         Array.from(row.querySelectorAll('[data-phase12a107-managed], [data-phase12a108-managed], [data-phase12a108-action]')).forEach((el) => {
           if (!el.closest('.safety-links-native')) el.remove();
         });
+        const obsoleteLabels = new Set(['applicant link', 'employer link', 'fmcsa pdf', 'fax fmcsa', 'client gmail', 'mark completed']);
+        Array.from(row.children).forEach((cell) => {
+          if (!cell || cell.querySelector('.safety-links-native')) return;
+          Array.from(cell.querySelectorAll('button, a')).forEach((el) => {
+            const label = text(el).replace(/\s+/g, ' ').trim().toLowerCase();
+            if (obsoleteLabels.has(label)) el.remove();
+          });
+        });
         Array.from(row.children).forEach((cell) => {
           if (cell.querySelector('.safety-links-native')) return;
           const cellText = text(cell).replace(/\s+/g, ' ').trim().toLowerCase();
@@ -2598,4 +2606,48 @@
   setInterval(removeOldAlertPanelsOutsideMonitoring, 300);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', removeOldAlertPanelsOutsideMonitoring);
   else removeOldAlertPanelsOutsideMonitoring();
+})();
+
+
+/* PHASE12A114_NATIVE_SAFETY_LINK_CLEANUP: remove stale duplicate Safety buttons from old patch scripts. */
+(function () {
+  const safetyLabels = new Set(['applicant link', 'employer link', 'fmcsa pdf', 'fax fmcsa', 'client gmail', 'mark completed']);
+  function normalize(value) { return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
+  function isSafetyPage() {
+    return Array.from(document.querySelectorAll('.page-header h1,h1')).some((h) => normalize(h.textContent) === 'safety performance reports');
+  }
+  function cleanupNativeSafetyRows() {
+    if (!isSafetyPage()) return;
+    document.querySelectorAll('tr').forEach((row) => {
+      const native = row.querySelector('.safety-links-native');
+      if (!native) return;
+      row.querySelectorAll('td, th').forEach((cell) => {
+        if (cell.contains(native)) return;
+        cell.querySelectorAll('button, a').forEach((button) => {
+          const label = normalize(button.textContent);
+          if (safetyLabels.has(label)) button.remove();
+        });
+        cell.querySelectorAll('.phase12a89-links-layout,.phase12a108-links-layout,.phase6-link-group,.phase12a89-link-color-group').forEach((wrapper) => {
+          if (!wrapper.querySelector('button, a') && !normalize(wrapper.textContent)) wrapper.remove();
+        });
+      });
+    });
+    const nativeModalOpen = document.querySelector('.safety-modal-backdrop');
+    if (nativeModalOpen) {
+      document.querySelectorAll('#phase12a78-fax-modal,#phase12a92-client-modal,#phase6-modal').forEach((modal) => {
+        modal.classList.add('hidden');
+        modal.setAttribute('aria-hidden', 'true');
+      });
+    }
+  }
+  let queued = false;
+  function queue() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; cleanupNativeSafetyRows(); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', cleanupNativeSafetyRows);
+  else cleanupNativeSafetyRows();
+  setInterval(cleanupNativeSafetyRows, 250);
+  if (document.body) new MutationObserver(queue).observe(document.body, { childList: true, subtree: true });
 })();
