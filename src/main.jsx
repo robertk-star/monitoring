@@ -374,20 +374,116 @@ function parseAppDate(raw) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function medExpiresWithin30(value) {
+function medExpireDays(value) {
   const d = parseAppDate(value);
-  if (!d) return false;
+  if (!d) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const days = Math.ceil((target.getTime() - today.getTime()) / 86400000);
-  return days >= 0 && days <= 30;
+  return Math.ceil((target.getTime() - today.getTime()) / 86400000);
+}
+
+function medExpiresWithin30(value) {
+  const days = medExpireDays(value);
+  return days !== null && days >= 0 && days <= 30;
+}
+
+function monitoringIsOn(applicant) {
+  return String(applicant?.monitorStatus || '').trim().toLowerCase() === 'on';
+}
+
+function monitoringAlertState(applicant) {
+  if (!monitoringIsOn(applicant)) return 'off';
+  const days = medExpireDays(applicant?.medExpire);
+  if (days === null) return 'blank';
+  if (days < 0) return 'expired';
+  if (days <= 30) return 'exp30';
+  if (days <= 60) return 'exp60';
+  if (/pending|review|needed|expired|attention/i.test(String(applicant?.mvrStatus || ''))) return 'mvr';
+  return 'ok';
+}
+
+function monitoringAlertCounts(applicants) {
+  const out = { total: 0, on: 0, off: 0, expired: 0, exp30: 0, exp60: 0, blank: 0, mvr: 0 };
+  applicants.forEach((applicant) => {
+    const state = monitoringAlertState(applicant);
+    out.total += 1;
+    if (monitoringIsOn(applicant)) out.on += 1;
+    else out.off += 1;
+    if (state === 'expired') out.expired += 1;
+    if (state === 'exp30') out.exp30 += 1;
+    if (state === 'exp60') out.exp60 += 1;
+    if (state === 'blank') out.blank += 1;
+    if (state === 'mvr') out.mvr += 1;
+  });
+  return out;
+}
+
+function csvEscape(value) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function downloadMonitoringCsv(applicants) {
+  const rows = [
+    ['File #', 'Name', 'Order Date', 'Monitoring', 'MVR Status', 'Med Expire', 'Notes'],
+    ...applicants.map((a) => [a.fileNumber, a.name, a.orderDate, a.monitorStatus, a.mvrStatus, a.medExpire, a.notes]),
+  ];
+  const csv = rows.map((row) => row.map(csvEscape).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `monitoring-current-view-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function MonitoringAlerts({ applicants, activeFilter, onFilterChange }) {
+  const counts = monitoringAlertCounts(applicants);
+  const items = [
+    ['all', 'Total', counts.total],
+    ['on', 'On Monitoring', counts.on],
+    ['off', 'Off Monitoring', counts.off],
+    ['expired', 'Expired Medical', counts.expired],
+    ['exp30', 'Expiring 30 Days', counts.exp30],
+    ['exp60', 'Expiring 60 Days', counts.exp60],
+    ['blank', 'Blank Med Expire', counts.blank],
+    ['mvr', 'MVR Attention', counts.mvr],
+  ];
+  const summary = [
+    `Total: ${counts.total}`,
+    `On Monitoring: ${counts.on}`,
+    `Off Monitoring: ${counts.off}`,
+    `Expired Medical: ${counts.expired}`,
+    `Expiring 30 Days: ${counts.exp30}`,
+    `Expiring 60 Days: ${counts.exp60}`,
+    `Blank Med Expire: ${counts.blank}`,
+    `MVR Attention: ${counts.mvr}`,
+  ].join('\n');
+  return (
+    <section className="card wide-card monitoring-alerts-card">
+      <h2>Monitoring Alerts</h2>
+      <div className="monitoring-alert-metrics-native">
+        {items.map(([key, label, count]) => (
+          <button key={key} type="button" className={activeFilter === key ? 'active' : ''} onClick={() => onFilterChange(key)}>
+            <b>{count}</b><span>{label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="monitoring-alert-actions-native">
+        <button type="button" onClick={() => navigator.clipboard?.writeText(summary).catch(() => window.prompt('Copy this summary:', summary))}>Copy Summary</button>
+        <button type="button" onClick={() => downloadMonitoringCsv(applicants)}>Download Current View CSV</button>
+        <button type="button" onClick={() => onFilterChange(activeFilter || 'all')}>Recalculate Alerts</button>
+      </div>
+      <p>Sort records by clicking the table headers for File #, Name, Order Date, or Med Expire.</p>
+    </section>
+  );
 }
 
 function Dashboard({ company, applicants, reports, refresh, openCard }) {
   const onCount = applicants.filter((a) => a.monitorStatus === 'On').length;
   const offCount = applicants.length - onCount;
-  const medExpiring = applicants.filter((a) => medExpiresWithin30(a.medExpire)).length;
+  const medExpiring = applicants.filter((a) => monitoringIsOn(a) && medExpiresWithin30(a.medExpire)).length;
   const completedReports = reports.filter((r) => statusText(r.status) === 'Completed').length;
   const consentNeeded = reports.filter((r) => ['Consent Needed', 'S1 Complete'].includes(statusText(r.status))).length;
   const consentGiven = reports.filter((r) => ['Consent Given', 'Emp Sent'].includes(statusText(r.status))).length;
@@ -424,6 +520,13 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
   const [sort, setSort] = useState({ key: '', direction: 'asc' });
+  const [alertFilter, setAlertFilter] = useState(() => localStorage.getItem('monitoring-alert-filter') || 'all');
+
+  function setAlertFilterPersisted(nextFilter) {
+    const value = nextFilter || 'all';
+    setAlertFilter(value);
+    localStorage.setItem('monitoring-alert-filter', value);
+  }
 
   const activeDashboardFilter = dashboardFilter?.page === 'monitoring' ? dashboardFilter : null;
 
@@ -434,9 +537,11 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
     let dashboardOk = true;
     if (activeDashboardFilter?.filter === 'on') dashboardOk = a.monitorStatus === 'On';
     if (activeDashboardFilter?.filter === 'off') dashboardOk = a.monitorStatus === 'Off';
-    if (activeDashboardFilter?.filter === 'med-expiring') dashboardOk = medExpiresWithin30(a.medExpire);
-    return matches && statusOk && dashboardOk;
-  }), [applicants, query, status, activeDashboardFilter]);
+    if (activeDashboardFilter?.filter === 'med-expiring') dashboardOk = monitoringIsOn(a) && medExpiresWithin30(a.medExpire);
+    let alertOk = true;
+    if (alertFilter && alertFilter !== 'all') alertOk = monitoringAlertState(a) === alertFilter;
+    return matches && statusOk && dashboardOk && alertOk;
+  }), [applicants, query, status, activeDashboardFilter, alertFilter]);
 
   function sortValue(row, key) {
     const value = row?.[key];
@@ -512,6 +617,7 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
   return (
     <>
       <Header title="Monitoring" subtitle={`${company?.name || 'Driver Pipeline'} · ${sorted.length} records`} action={refresh} />
+      <MonitoringAlerts applicants={applicants} activeFilter={alertFilter} onFilterChange={setAlertFilterPersisted} />
       <DashboardFilterBanner filter={activeDashboardFilter} onClear={clearDashboardFilter} />
       <section className="card toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search file number, name, notes..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>On</option><option>Off</option></select></section>
       <section className="card table-card"><table><thead><tr><SortHeader label="File #" sortKey="fileNumber" /><SortHeader label="Name" sortKey="name" /><SortHeader label="Order Date" sortKey="orderDate" /><SortHeader label="Monitoring" sortKey="monitorStatus" /><SortHeader label="MVR Status" sortKey="mvrStatus" /><SortHeader label="Med Expire" sortKey="medExpire" /><SortHeader label="Notes" sortKey="notes" /><th></th></tr></thead><tbody>{sorted.map((a) => <ApplicantRow key={a.id} applicant={a} onSave={updateApplicant} />)}</tbody></table>{!sorted.length ? <div className="empty">No applicants found. Import your CSV data into Supabase.</div> : null}</section>
