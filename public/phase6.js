@@ -2676,3 +2676,319 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 })();
+
+/* PHASE12A101_DASHBOARD_CARD_DRILLDOWNS */
+(function () {
+  const FILTER_KEY = 'phase12a101DashboardFilter';
+  const STYLE_ID = 'phase12a101-drilldown-style';
+
+  function text(el) {
+    return (el && el.textContent ? el.textContent : '').replace(/\s+/g, ' ').trim();
+  }
+
+  function isDashboardPage() {
+    const h1 = document.querySelector('.page-header h1, .head h2, h1');
+    return /^dashboard$/i.test(text(h1));
+  }
+
+  function isMonitoringPage() {
+    const h1 = document.querySelector('.page-header h1, .head h2, h1');
+    return /^monitoring$/i.test(text(h1));
+  }
+
+  function isSafetyPage() {
+    const h1 = document.querySelector('.page-header h1, .head h2, h1');
+    return /safety\s+performance\s+reports?/i.test(text(h1));
+  }
+
+  function cleanHeader(value) {
+    return String(value || '')
+      .replace(/[↕↑↓▲▼]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function getFilter() {
+    try {
+      const raw = sessionStorage.getItem(FILTER_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function setFilter(filter) {
+    sessionStorage.setItem(FILTER_KEY, JSON.stringify({ ...filter, createdAt: Date.now() }));
+  }
+
+  function clearFilter() {
+    sessionStorage.removeItem(FILTER_KEY);
+    document.querySelectorAll('[data-phase12a101-hidden="1"]').forEach((row) => {
+      row.style.display = '';
+      row.removeAttribute('data-phase12a101-hidden');
+    });
+    document.querySelectorAll('.phase12a101-filter-banner').forEach((el) => el.remove());
+  }
+
+  function addStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      .phase12a100-card.phase12a101-clickable {
+        cursor: pointer;
+        transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+      }
+      .phase12a100-card.phase12a101-clickable:hover {
+        transform: translateY(-2px);
+        border-color: #93c5fd;
+        box-shadow: 0 12px 26px rgba(15,23,42,.12);
+      }
+      .phase12a101-filter-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 0 0 14px;
+        padding: 10px 12px;
+        border: 1px solid #bfdbfe;
+        border-radius: 12px;
+        background: #eff6ff;
+        color: #1e3a8a;
+        font-size: 13px;
+        font-weight: 800;
+      }
+      .phase12a101-filter-banner button {
+        border: 1px solid #93c5fd;
+        background: #fff;
+        color: #1d4ed8;
+        border-radius: 999px;
+        padding: 5px 10px;
+        font-weight: 900;
+        cursor: pointer;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function clickNav(label) {
+    const buttons = Array.from(document.querySelectorAll('.sidebar button, aside button, .nav-btn'));
+    const button = buttons.find((btn) => {
+      const value = text(btn).toLowerCase();
+      return value === label.toLowerCase() || value.includes(label.toLowerCase());
+    });
+    if (button) {
+      button.click();
+      return true;
+    }
+    return false;
+  }
+
+  function openTarget(filter) {
+    setFilter(filter);
+    clickNav(filter.page === 'safety' ? 'Safety Performance' : 'Monitoring');
+    setTimeout(applySavedFilter, 150);
+    setTimeout(applySavedFilter, 450);
+    setTimeout(applySavedFilter, 900);
+  }
+
+  function getCardLabel(card) {
+    const label = card.querySelector('.phase12a100-card-head span');
+    return text(label || card).replace(/View list\s*›?/i, '').trim();
+  }
+
+  function dashboardActionFor(label) {
+    const normalized = String(label || '').trim().toLowerCase();
+    const map = {
+      'total applicants': { page: 'monitoring', filter: 'all', label: 'Total Applicants' },
+      'on monitor': { page: 'monitoring', filter: 'on', label: 'On Monitor' },
+      'off monitor': { page: 'monitoring', filter: 'off', label: 'Off Monitor' },
+      'med certs expiring': { page: 'monitoring', filter: 'med-expiring', label: 'Med Certs Expiring' },
+      'total reports': { page: 'safety', filter: 'all', label: 'Total Reports' },
+      'consent needed': { page: 'safety', filter: 'consent-needed', label: 'Consent Needed' },
+      'consent given': { page: 'safety', filter: 'consent-given', label: 'Consent Given' },
+      'orders open': { page: 'safety', filter: 'orders-open', label: 'Orders Open' },
+      'completed': { page: 'safety', filter: 'completed', label: 'Completed' }
+    };
+    return map[normalized] || null;
+  }
+
+  function enhanceDashboardCards() {
+    if (!isDashboardPage()) return;
+    addStyles();
+    document.querySelectorAll('#phase12a100-dashboard-panel .phase12a100-card').forEach((card) => {
+      const action = dashboardActionFor(getCardLabel(card));
+      if (!action) return;
+      card.classList.add('phase12a101-clickable');
+      card.setAttribute('role', 'button');
+      card.setAttribute('tabindex', '0');
+      card.title = `Open ${action.label}`;
+      if (!card.dataset.phase12a101Hooked) {
+        card.dataset.phase12a101Hooked = '1';
+        card.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openTarget(action);
+        }, true);
+        card.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openTarget(action);
+          }
+        });
+      }
+    });
+  }
+
+  function findMainTable(expected) {
+    const tables = Array.from(document.querySelectorAll('table'));
+    return tables.find((table) => {
+      const headers = Array.from(table.querySelectorAll('thead th')).map((th) => cleanHeader(text(th)));
+      return expected.every((needle) => headers.some((h) => h.includes(needle)));
+    }) || null;
+  }
+
+  function tableIndexes(table) {
+    const headers = Array.from(table.querySelectorAll('thead th')).map((th) => cleanHeader(text(th)));
+    const find = (names) => {
+      for (const name of names) {
+        const idx = headers.findIndex((h) => h === name || h.includes(name));
+        if (idx >= 0) return idx;
+      }
+      return -1;
+    };
+    return {
+      file: find(['file #', 'file']),
+      applicant: find(['applicant', 'name']),
+      monitoring: find(['monitoring', 'monitor status', 'monitor']),
+      medExpire: find(['med expire', 'medical', 'certificate']),
+      status: find(['status'])
+    };
+  }
+
+  function rowCell(row, idx) {
+    if (idx < 0 || !row.children[idx]) return '';
+    return text(row.children[idx]);
+  }
+
+  function parseDate(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return null;
+    let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+    if (m) {
+      const year = m[3].length === 2 ? Number('20' + m[3]) : Number(m[3]);
+      return new Date(year, Number(m[1]) - 1, Number(m[2]));
+    }
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+
+  function within30(raw) {
+    const d = parseDate(raw);
+    if (!d) return false;
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const days = Math.ceil((d.getTime() - today.getTime()) / 86400000);
+    return days >= 0 && days <= 30;
+  }
+
+  function setMonitoringSelect(value) {
+    const selects = Array.from(document.querySelectorAll('.toolbar select, select'));
+    const select = selects.find((sel) => Array.from(sel.options || []).some((option) => ['All', 'On', 'Off'].includes(text(option))));
+    if (!select) return;
+    if (Array.from(select.options || []).some((option) => option.value === value || text(option) === value)) {
+      select.value = value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
+
+  function addBanner(label) {
+    const header = document.querySelector('.page-header, .head');
+    if (!header) return;
+    let banner = document.querySelector('.phase12a101-filter-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.className = 'phase12a101-filter-banner';
+      header.insertAdjacentElement('afterend', banner);
+    }
+    banner.innerHTML = `<span>Dashboard filter: ${label}</span><button type="button" data-phase12a101-clear>Clear filter</button>`;
+  }
+
+  function applyMonitoringFilter(filter) {
+    if (!isMonitoringPage()) return;
+    const table = findMainTable(['file', 'monitor']);
+    if (!table) return;
+    const idx = tableIndexes(table);
+
+    if (filter.filter === 'all') setMonitoringSelect('All');
+    if (filter.filter === 'on') setMonitoringSelect('On');
+    if (filter.filter === 'off') setMonitoringSelect('Off');
+    if (filter.filter === 'med-expiring') setMonitoringSelect('All');
+
+    const rows = Array.from(table.querySelectorAll('tbody tr')).filter((row) => row.children && row.children.length > 1);
+    rows.forEach((row) => {
+      let show = true;
+      if (filter.filter === 'on') show = /^on$/i.test(rowCell(row, idx.monitoring));
+      if (filter.filter === 'off') show = /^off$/i.test(rowCell(row, idx.monitoring));
+      if (filter.filter === 'med-expiring') show = within30(rowCell(row, idx.medExpire));
+      row.style.display = show ? '' : 'none';
+      if (!show) row.setAttribute('data-phase12a101-hidden', '1');
+      else row.removeAttribute('data-phase12a101-hidden');
+    });
+    addBanner(filter.label || 'Monitoring');
+  }
+
+  function safetyStatus(row, idx) {
+    return rowCell(row, idx.status).replace(/\s+/g, ' ').trim();
+  }
+
+  function applySafetyFilter(filter) {
+    if (!isSafetyPage()) return;
+    const table = findMainTable(['file', 'status']);
+    if (!table) return;
+    const idx = tableIndexes(table);
+    const rows = Array.from(table.querySelectorAll('tbody tr')).filter((row) => row.children && row.children.length > 1);
+    rows.forEach((row) => {
+      const status = safetyStatus(row, idx);
+      let show = true;
+      if (filter.filter === 'consent-needed') show = /^(Consent Needed|S1 Complete)$/i.test(status);
+      if (filter.filter === 'consent-given') show = /^(Consent Given|Emp Sent)$/i.test(status);
+      if (filter.filter === 'orders-open') show = !/^Completed$/i.test(status);
+      if (filter.filter === 'completed') show = /^Completed$/i.test(status);
+      row.style.display = show ? '' : 'none';
+      if (!show) row.setAttribute('data-phase12a101-hidden', '1');
+      else row.removeAttribute('data-phase12a101-hidden');
+    });
+    addBanner(filter.label || 'Safety Performance');
+  }
+
+  function applySavedFilter() {
+    const filter = getFilter();
+    if (!filter) return;
+    if (filter.page === 'monitoring') applyMonitoringFilter(filter);
+    if (filter.page === 'safety') applySafetyFilter(filter);
+  }
+
+  document.addEventListener('click', (event) => {
+    const clear = event.target && event.target.closest && event.target.closest('[data-phase12a101-clear]');
+    if (clear) {
+      event.preventDefault();
+      event.stopPropagation();
+      clearFilter();
+      return;
+    }
+  }, true);
+
+  function tick() {
+    addStyles();
+    enhanceDashboardCards();
+    applySavedFilter();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tick);
+  else tick();
+  setInterval(tick, 700);
+})();
