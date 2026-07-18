@@ -780,12 +780,12 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
   const disabled = Boolean(busyAction);
   return (
     <div className="safety-links-native">
-      <button type="button" className="phase6-link-button applicant" disabled={disabled} onClick={() => run('Applicant Link', () => makeResponseLink('applicant'))}>Applicant Link</button>
-      <button type="button" className="phase6-link-button employer" disabled={disabled} onClick={() => run('Employer Link', () => makeResponseLink('employer'))}>Employer Link</button>
-      <button type="button" className="phase6-link-button phase12a107-fmcsa-pdf" disabled={disabled} onClick={() => run('FMCSA PDF', () => downloadFmcsaPdf(report, companyId))}>FMCSA PDF</button>
-      <button type="button" className="phase6-link-button fax" disabled={disabled} onClick={() => run('Fax FMCSA', openFaxGmail)}>Fax FMCSA</button>
-      <button type="button" className="phase6-link-button phase12a107-client-gmail" disabled={disabled} onClick={() => run('Client Gmail', openClientGmail)}>Client Gmail</button>
-      <button type="button" className="phase6-link-button phase12a107-mark-completed" disabled={disabled} onClick={() => run('Mark Completed', markCompleted)}>Mark Completed</button>
+      <button type="button" className="safety-native-button applicant" disabled={disabled} onClick={() => run('Applicant Link', () => makeResponseLink('applicant'))}>Applicant Link</button>
+      <button type="button" className="safety-native-button employer" disabled={disabled} onClick={() => run('Employer Link', () => makeResponseLink('employer'))}>Employer Link</button>
+      <button type="button" className="safety-native-button fmcsa" disabled={disabled} onClick={() => run('FMCSA PDF', () => downloadFmcsaPdf(report, companyId))}>FMCSA PDF</button>
+      <button type="button" className="safety-native-button fax" disabled={disabled} onClick={() => run('Fax FMCSA', openFaxGmail)}>Fax FMCSA</button>
+      <button type="button" className="safety-native-button client-gmail" disabled={disabled} onClick={() => run('Client Gmail', openClientGmail)}>Client Gmail</button>
+      <button type="button" className="safety-native-button mark-completed" disabled={disabled} onClick={() => run('Mark Completed', markCompleted)}>Mark Completed</button>
       {busyAction ? <small>Working on {busyAction}...</small> : null}
     </div>
   );

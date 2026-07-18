@@ -47,3 +47,15 @@
 .safety-links-native .employer,.safety-links-native .phase12a107-fmcsa-pdf{color:#087443;background:#ecfdf3}
 .safety-links-native .fax,.safety-links-native .phase12a107-client-gmail,.safety-links-native .phase12a107-mark-completed{color:#5925dc;background:#f5f3ff}
 .safety-links-native small{display:block;width:100%;font-size:11px;color:#667085;margin-top:2px}
+
+
+/* Phase 12A-111 native Safety Performance link buttons */
+.safety-links-cell { min-width: 245px; }
+.safety-links-native { display: flex; flex-wrap: wrap; gap: 7px; align-items: flex-start; max-width: 235px; }
+.safety-links-native small { flex-basis: 100%; color: var(--muted); font-size: 11px; }
+.safety-native-button { appearance: none; border: 1px solid #94a3b8; background: #fff; border-radius: 999px; padding: 6px 11px; font-size: 13px; font-weight: 800; line-height: 1; cursor: pointer; white-space: nowrap; }
+.safety-native-button:disabled { opacity: .55; cursor: not-allowed; }
+.safety-native-button.applicant { border-color: #2563eb; color: #1d4ed8; background: #eff6ff; }
+.safety-native-button.employer, .safety-native-button.fmcsa, .safety-native-button.mark-completed { border-color: #16a34a; color: #166534; background: #ecfdf5; }
+.safety-native-button.fax, .safety-native-button.client-gmail { border-color: #7c3aed; color: #5b21b6; background: #faf5ff; }
+.safety-native-button:hover { filter: brightness(.98); transform: translateY(-1px); }
