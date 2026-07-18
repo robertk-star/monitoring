@@ -815,6 +815,38 @@ function pdfSignatureDate(value: any) {
   }
   return raw.slice(0, 10);
 }
+
+function pdfSignatureDateStamp(value: any) {
+  const raw = pdfClean(value);
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+
+  // Store signatures in UTC, but print the applicant signing stamp in Central time
+  // so the generated FMCSA PDF matches the admin's working timezone.
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZoneName: 'short'
+    }).formatToParts(date);
+    const get = (type: string) => parts.find((part) => part.type === type)?.value || '';
+    const month = get('month');
+    const day = get('day');
+    const year = get('year');
+    const hour = get('hour');
+    const minute = get('minute');
+    const dayPeriod = get('dayPeriod');
+    const zone = get('timeZoneName');
+    return `${month}/${day}/${year} ${hour}:${minute} ${dayPeriod}${zone ? ` ${zone}` : ''}`.trim();
+  } catch {
+    return `${pdfSignatureDate(raw)} ${date.toISOString().slice(11, 16)} UTC`;
+  }
+}
 function pdfDrawText(page: any, text: any, x: number, y: number, options: any = {}) {
   const value = pdfClean(text);
   if (!value) return;
@@ -870,6 +902,7 @@ async function buildCompletedSafetyPdf(report: any) {
   const applicantSignature = parseApplicantSignature(report.notes);
   const applicantSignatureName = pdfClean(applicantSignature?.name);
   const applicantSignatureDate = pdfSignatureDate(applicantSignature?.signedAt);
+  const applicantSignatureDateStamp = pdfSignatureDateStamp(applicantSignature?.signedAt);
 
   pdfSetText(form, 'I Print Name', report.applicantName);
   pdfSetText(form, 'Previous Employer 1', report.prevEmployerName);
@@ -886,7 +919,7 @@ async function buildCompletedSafetyPdf(report: any) {
   pdfSetText(form, 'City State Zip_2', report.employerCityStateZip);
   pdfSetText(form, 'Prospective employers confidential fax number', report.confFax || report.employerFax);
   pdfSetText(form, 'Prospective employers confidential email address', report.confEmail || report.employerEmail);
-  pdfSetText(form, 'Date', applicantSignatureDate || pdfShortDate(report.created));
+  pdfSetText(form, 'Date', applicantSignatureDate);
 
   pdfCheck(form, 'The applicant named above was or is employed or used by us Yes', pdfSame(report.employedByCompany, 'Yes'));
   pdfSetText(form, 'Employed as job title', report.jobTitle);
@@ -933,15 +966,20 @@ async function buildCompletedSafetyPdf(report: any) {
 
   form.flatten();
 
-  // PHASE12A91: show applicant electronic signature and signature date on FMCSA PDF.
-  // The FMCSA template uses a PDF signature widget for the applicant signature line,
-  // so we draw the saved electronic signature text onto the flattened PDF page.
+  // PHASE12A119: show the applicant's electronic signature as a cursive-style signature,
+  // but do NOT draw the date on top of the form date field. The Date field above is
+  // filled before flattening; drawing it a second time made it look like two dates overlapped.
   if (applicantSignatureName || applicantSignatureDate) {
     const signaturePage = pages[0];
-    const signatureFont = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+    const signatureFont = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+    const stampFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const signatureColor = rgb(0, 0, 0);
-    pdfDrawText(signaturePage, applicantSignatureName || report.applicantName, 42, 315, { size: 10, font: signatureFont, color: signatureColor, maxChars: 70 });
-    pdfDrawText(signaturePage, applicantSignatureDate, 455, 315, { size: 10, font: signatureFont, color: signatureColor, maxChars: 20 });
+    const stampColor = rgb(0.18, 0.18, 0.18);
+    const signatureText = applicantSignatureName || report.applicantName;
+    pdfDrawText(signaturePage, signatureText, 54, 315, { size: 15, font: signatureFont, color: signatureColor, maxChars: 46 });
+    if (applicantSignatureDateStamp) {
+      pdfDrawText(signaturePage, `Electronically signed ${applicantSignatureDateStamp}`, 245, 315, { size: 6.5, font: stampFont, color: stampColor, maxChars: 82 });
+    }
   }
 
   return await pdfDoc.save();
