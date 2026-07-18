@@ -1964,19 +1964,24 @@
     const firstSection = form.querySelector('.form-section');
     if (!firstSection) return;
 
+    const nativeSignatureCard = form.querySelector('[data-native-signature-status="1"]');
     let card = form.querySelector('[data-phase12a85-signature-status]');
-    if (!card) {
-      card = document.createElement('div');
-      card.setAttribute('data-phase12a85-signature-status', '1');
-      if (notesField && notesField.parentNode) notesField.insertAdjacentElement('afterend', card);
-      else firstSection.appendChild(card);
-    }
+    if (nativeSignatureCard) {
+      if (card) card.remove();
+    } else {
+      if (!card) {
+        card = document.createElement('div');
+        card.setAttribute('data-phase12a85-signature-status', '1');
+        if (notesField && notesField.parentNode) notesField.insertAdjacentElement('afterend', card);
+        else firstSection.appendChild(card);
+      }
 
-    const signature = phase12a85ParseSignature(notesInput ? notesInput.value : '');
-    const statusValue = statusSelect ? statusSelect.value : '';
-    const applicantName = applicantInput ? applicantInput.value : '';
-    const nextHtml = phase12a85SignatureCardHtml(signature, statusValue, applicantName);
-    if (card.innerHTML.trim() !== nextHtml.trim()) card.innerHTML = nextHtml;
+      const signature = phase12a85ParseSignature(notesInput ? notesInput.value : '');
+      const statusValue = statusSelect ? statusSelect.value : '';
+      const applicantName = applicantInput ? applicantInput.value : '';
+      const nextHtml = phase12a85SignatureCardHtml(signature, statusValue, applicantName);
+      if (card.innerHTML.trim() !== nextHtml.trim()) card.innerHTML = nextHtml;
+    }
 
     if (notesInput && !notesInput.dataset.phase12a85Listener) {
       notesInput.dataset.phase12a85Listener = '1';
