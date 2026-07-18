@@ -2306,21 +2306,49 @@
 
 
 
+  let phase12a99SidebarReloadObserverStarted = false;
+
   function removeSidebarReloadMonitoringButton() {
     const sidebar = document.querySelector('.sidebar');
     if (!sidebar) return;
-    Array.from(sidebar.querySelectorAll('button, a, .nav-btn')).forEach((el) => {
+
+    Array.from(sidebar.querySelectorAll('button, a, .nav-btn, li, div')).forEach((el) => {
+      if (!el || !el.isConnected) return;
       const label = text(el).replace(/\s+/g, ' ').trim();
       if (/^reload monitoring$/i.test(label)) {
-        const wrapper = el.closest('li') || el.closest('.nav-btn') || el;
+        const wrapper = el.closest('li') || el.closest('button') || el.closest('a') || el;
         wrapper.remove();
       }
     });
   }
 
+  function startSidebarReloadMonitoringCleanup() {
+    removeSidebarReloadMonitoringButton();
+    if (phase12a99SidebarReloadObserverStarted) return;
+    phase12a99SidebarReloadObserverStarted = true;
+
+    const run = () => {
+      try { removeSidebarReloadMonitoringButton(); } catch (_) {}
+    };
+
+    // Older phase scripts can re-add this sidebar action after React renders.
+    // Watch the sidebar/document and remove it immediately so it does not blink.
+    const observer = new MutationObserver(run);
+    const observeTarget = document.body || document.documentElement;
+    if (observeTarget) observer.observe(observeTarget, { childList: true, subtree: true, characterData: true });
+
+    // Also sweep quickly during first load while the sidebar scripts finish mounting.
+    let sweeps = 0;
+    const fastSweep = setInterval(() => {
+      run();
+      sweeps += 1;
+      if (sweeps >= 80) clearInterval(fastSweep);
+    }, 75);
+  }
+
   function refresh() {
     addStyles();
-    removeSidebarReloadMonitoringButton();
+    startSidebarReloadMonitoringCleanup();
     ensureEmailSettingsNav();
     removeEmbeddedEmailSettingsCard();
     if (phase12a80EmailSettingsActive) {
