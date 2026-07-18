@@ -2304,8 +2304,23 @@
     }
   }
 
+
+
+  function removeSidebarReloadMonitoringButton() {
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar) return;
+    Array.from(sidebar.querySelectorAll('button, a, .nav-btn')).forEach((el) => {
+      const label = text(el).replace(/\s+/g, ' ').trim();
+      if (/^reload monitoring$/i.test(label)) {
+        const wrapper = el.closest('li') || el.closest('.nav-btn') || el;
+        wrapper.remove();
+      }
+    });
+  }
+
   function refresh() {
     addStyles();
+    removeSidebarReloadMonitoringButton();
     ensureEmailSettingsNav();
     removeEmbeddedEmailSettingsCard();
     if (phase12a80EmailSettingsActive) {
