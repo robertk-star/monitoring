@@ -2382,6 +2382,163 @@
     }, 75);
   }
 
+
+  // PHASE12A108_STABLE_SAFETY_LINKS START
+  const phase12a108Actions = [
+    { action: 'applicant', label: 'Applicant Link', group: 'blue', className: 'phase6-link-button applicant phase12a108-button' },
+    { action: 'employer', label: 'Employer Link', group: 'green', className: 'phase6-link-button employer phase12a108-button' },
+    { action: 'fmcsaPdf', label: 'FMCSA PDF', group: 'green', className: 'phase6-link-button phase12a107-fmcsa-pdf phase12a108-button' },
+    { action: 'fax', label: 'Fax FMCSA', group: 'purple', className: 'phase6-link-button fax phase12a108-button' },
+    { action: 'clientGmail', label: 'Client Gmail', group: 'purple', className: 'phase6-link-button phase12a107-client-gmail phase12a108-button' },
+    { action: 'markCompleted', label: 'Mark Completed', group: 'purple', className: 'phase6-link-button phase12a107-mark-completed phase12a108-button' }
+  ];
+  const phase12a108KnownLabels = new Set(phase12a108Actions.map((item) => item.label.toLowerCase()));
+  let phase12a108DelegatedStarted = false;
+  let phase12a108ObserverStarted = false;
+  let phase12a108Queued = false;
+
+  function phase12a108ButtonLabel(el) {
+    return text(el).replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function phase12a108FindLinksIndex(table) {
+    const headers = Array.from(table.querySelectorAll('thead th'));
+    let index = headers.findIndex((th) => cleanHeader(text(th)) === 'links');
+    if (index >= 0) return index;
+    index = headers.findIndex((th) => ['phase 4 actions', 'response links', 'actions'].includes(cleanHeader(text(th))));
+    if (index >= 0) return index;
+    const idx = indexes(table);
+    return idx.actions;
+  }
+
+  function phase12a108CleanDuplicateLinkButtons(row, linksCell) {
+    Array.from(row.children).forEach((cell) => {
+      if (!cell || cell === linksCell) return;
+      Array.from(cell.querySelectorAll('button, a')).forEach((button) => {
+        const label = phase12a108ButtonLabel(button);
+        if (phase12a108KnownLabels.has(label) || button.dataset.phase12a108Action || button.dataset.phase12a107Managed) {
+          button.remove();
+        }
+      });
+      Array.from(cell.querySelectorAll('.phase12a89-link-color-group, .phase12a89-links-main, .phase12a89-links-layout, .phase6-link-group')).forEach((wrapper) => {
+        if (!wrapper.querySelector('button, a, svg') && !text(wrapper)) wrapper.remove();
+      });
+    });
+  }
+
+  function phase12a108MakeButton(item) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = item.className;
+    button.textContent = item.label;
+    button.dataset.phase12a108Action = item.action;
+    button.dataset.phase12a108Managed = '1';
+    return button;
+  }
+
+  function phase12a108RenderLinksCell(row, linksCell) {
+    if (!linksCell) return;
+    const desiredActions = phase12a108Actions.map((item) => item.action).join('|');
+    const currentActions = Array.from(linksCell.querySelectorAll('[data-phase12a108-action]')).map((button) => button.dataset.phase12a108Action).join('|');
+    const extraKnownButtons = Array.from(linksCell.querySelectorAll('button, a')).some((button) => {
+      if (button.dataset.phase12a108Action) return false;
+      return phase12a108KnownLabels.has(phase12a108ButtonLabel(button));
+    });
+    if (linksCell.dataset.phase12a108LinksReady === '1' && currentActions === desiredActions && !extraKnownButtons) return;
+
+    linksCell.classList.add('phase12a89-links-cell', 'phase12a108-links-cell');
+    linksCell.innerHTML = '';
+    const layout = document.createElement('div');
+    layout.className = 'phase12a89-links-layout phase12a108-links-layout';
+    const main = document.createElement('div');
+    main.className = 'phase12a89-links-main';
+    layout.appendChild(main);
+
+    const groups = {
+      blue: document.createElement('div'),
+      green: document.createElement('div'),
+      purple: document.createElement('div')
+    };
+    Object.entries(groups).forEach(([name, group]) => {
+      group.className = 'phase12a89-link-color-group ' + name;
+    });
+    phase12a108Actions.forEach((item) => groups[item.group].appendChild(phase12a108MakeButton(item)));
+    ['blue', 'green', 'purple'].forEach((name) => main.appendChild(groups[name]));
+    linksCell.appendChild(layout);
+    row.dataset.phase12a108LinksReady = '1';
+  }
+
+  function phase12a108StabilizeSafetyLinks() {
+    if (!isSafetyPage() || phase12a80EmailSettingsActive) return;
+    phase12a108StartDelegatedHandler();
+    phase12a108StartObserver();
+    safetyTables().forEach((table) => {
+      const linksIndex = phase12a108FindLinksIndex(table);
+      if (linksIndex < 0) return;
+      const headers = Array.from(table.querySelectorAll('thead th'));
+      if (headers[linksIndex]) headers[linksIndex].textContent = 'Links';
+      Array.from(table.querySelectorAll('tbody tr')).forEach((row) => {
+        const linksCell = row.children[linksIndex];
+        if (!linksCell) return;
+        phase12a108CleanDuplicateLinkButtons(row, linksCell);
+        phase12a108RenderLinksCell(row, linksCell);
+      });
+    });
+  }
+
+  function phase12a108QueueStabilize() {
+    if (phase12a108Queued) return;
+    phase12a108Queued = true;
+    window.requestAnimationFrame(() => {
+      phase12a108Queued = false;
+      try { phase12a108StabilizeSafetyLinks(); } catch (_) {}
+    });
+  }
+
+  function phase12a108StartObserver() {
+    if (phase12a108ObserverStarted || !document.body) return;
+    phase12a108ObserverStarted = true;
+    const observer = new MutationObserver((mutations) => {
+      if (!isSafetyPage() || phase12a80EmailSettingsActive) return;
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (!node || node.nodeType !== 1) continue;
+          const nodeText = text(node).replace(/\s+/g, ' ').trim().toLowerCase();
+          if (nodeText.includes('client gmail') || nodeText.includes('mark completed') || nodeText.includes('fmcsa pdf') || nodeText.includes('applicant link') || nodeText.includes('employer link') || nodeText.includes('fax fmcsa')) {
+            phase12a108QueueStabilize();
+            return;
+          }
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function phase12a108StartDelegatedHandler() {
+    if (phase12a108DelegatedStarted) return;
+    phase12a108DelegatedStarted = true;
+    document.addEventListener('click', (event) => {
+      const button = event.target && event.target.closest ? event.target.closest('[data-phase12a108-action]') : null;
+      if (!button) return;
+      const row = button.closest('tr');
+      if (!row) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      const action = button.dataset.phase12a108Action;
+      const run = async () => {
+        if (action === 'applicant') return generateLink(row, 'applicant');
+        if (action === 'employer') return generateLink(row, 'employer');
+        if (action === 'fmcsaPdf') return phase12a107DownloadFmcsa(row);
+        if (action === 'fax') return showFaxModal(row);
+        if (action === 'clientGmail') return showClientGmailModal(row);
+        if (action === 'markCompleted') return phase12a107MarkCompleted(row);
+      };
+      Promise.resolve(run()).catch((error) => toast(error?.message || 'Could not run this report link.', true));
+    }, true);
+  }
+  // PHASE12A108_STABLE_SAFETY_LINKS END
+
   function refresh() {
     addStyles();
     startSidebarReloadMonitoringCleanup();
@@ -2417,6 +2574,7 @@
     ensureSafetyStatusOptions();
     makeSafetyTablesSortable();
     hookSafetyRefreshButton();
+    phase12a108StabilizeSafetyLinks();
   }
 
   setInterval(refresh, 1000);
