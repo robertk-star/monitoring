@@ -632,6 +632,165 @@ function ApplicantRow({ applicant, onSave }) {
   return <tr><td><b>{applicant.fileNumber}</b></td><td>{applicant.name}</td><td>{applicant.orderDate}</td><td><select value={draft.monitorStatus} onChange={(e) => setDraft({ ...draft, monitorStatus: e.target.value })}><option>On</option><option>Off</option></select></td><td>{applicant.mvrStatus}</td><td><input className="small-input" value={draft.medExpire || ''} onChange={(e) => setDraft({ ...draft, medExpire: e.target.value })} /></td><td><input value={draft.notes || ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></td><td><button className="icon-btn" disabled={!dirty} onClick={() => onSave(applicant, { monitorStatus: draft.monitorStatus, medExpire: draft.medExpire, notes: draft.notes })}><Save size={16} /></button></td></tr>;
 }
 
+
+function replaceTemplateTokens(value, report, extra = {}) {
+  const today = new Date().toLocaleDateString();
+  const tokens = {
+    applicantName: report?.applicantName || '',
+    fileNumber: report?.fileNumber || '',
+    previousEmployer: report?.prevEmployerName || '',
+    clientName: report?.employerName || '',
+    clientEmail: report?.employerEmail || '',
+    recipientName: extra.recipientName || report?.prevEmployerName || '',
+    faxNumber: extra.faxNumber || '',
+    today,
+  };
+  return String(value || '').replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => tokens[key] ?? '');
+}
+
+async function copyToClipboard(value) {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchEmailTemplates(companyId) {
+  const data = await api(`/api/email-templates?type=fax&companyId=${encodeURIComponent(companyId)}`);
+  return (data.templates || []).filter((template) => template.isActive !== false);
+}
+
+async function chooseTemplate(companyId, report, purpose) {
+  let templates = [];
+  try { templates = await fetchEmailTemplates(companyId); } catch { templates = []; }
+  if (!templates.length) {
+    return {
+      id: null,
+      name: 'Manual/default',
+      subject: purpose === 'fax'
+        ? 'FMCSA Safety Performance Report - File #{{fileNumber}}'
+        : 'Safety Performance Report - {{applicantName}}',
+      body: purpose === 'fax'
+        ? 'Please see the attached FMCSA Safety Performance report for {{applicantName}}.\n\nFile Number: {{fileNumber}}\n\nThank you,\nSaffHire Background Screening'
+        : 'Please see the completed Safety Performance report for {{applicantName}}.\n\nFile Number: {{fileNumber}}\n\nThank you,\nSaffHire Background Screening',
+    };
+  }
+  const list = templates.map((template, index) => `${index + 1}. ${template.name}`).join('\n');
+  const picked = window.prompt(`Select an email template for ${purpose === 'fax' ? 'Fax FMCSA' : 'Client Gmail'}:\n\n${list}`, '1');
+  if (picked === null) return null;
+  const index = Math.max(0, Math.min(templates.length - 1, Number(picked || 1) - 1));
+  return templates[index] || templates[0];
+}
+
+async function downloadFmcsaPdf(report, companyId) {
+  const fileNumber = String(report?.fileNumber || '').trim();
+  const url = `/api/client-safety-pdf?companyId=${encodeURIComponent(companyId)}&fileNumber=${encodeURIComponent(fileNumber)}`;
+  const response = await fetch(url, { credentials: 'include' });
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok) {
+    let message = `Could not download FMCSA PDF: ${response.status}`;
+    if (contentType.includes('application/json')) {
+      const payload = await response.json().catch(() => null);
+      if (payload?.message) message = payload.message;
+    } else {
+      const text = await response.text().catch(() => '');
+      if (text) message = text.slice(0, 200);
+    }
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get('content-disposition') || '';
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = filenameMatch ? filenameMatch[1] : `completed-safety-performance-${fileNumber || 'report'}.pdf`;
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 2000);
+  return filename;
+}
+
+function gmailComposeUrl(to, subject, body) {
+  return 'https://mail.google.com/mail/?view=cm&fs=1'
+    + `&to=${encodeURIComponent(to || '')}`
+    + `&su=${encodeURIComponent(subject || '')}`
+    + `&body=${encodeURIComponent(body || '')}`;
+}
+
+function SafetyLinks({ report, companyId, company, onReportUpdated }) {
+  const [busyAction, setBusyAction] = useState('');
+
+  async function run(label, fn) {
+    setBusyAction(label);
+    try { await fn(); } catch (error) { alert(error?.message || 'Action failed.'); } finally { setBusyAction(''); }
+  }
+
+  async function makeResponseLink(role) {
+    const data = await api('/api/safety-response-link', {
+      method: 'POST',
+      body: JSON.stringify({ companyId, fileNumber: report.fileNumber, reportId: report.id, responseRole: role }),
+    });
+    if (!data.formUrl) throw new Error('The app did not return a response link.');
+    await copyToClipboard(data.formUrl);
+    const title = role === 'applicant' ? 'Applicant Link' : 'Employer Link';
+    window.prompt(`${title} created and copied. Copy/send this link:`, data.formUrl);
+  }
+
+  async function openClientGmail() {
+    const template = await chooseTemplate(companyId, report, 'client');
+    if (!template) return;
+    const subject = replaceTemplateTokens(template.subject, report);
+    const body = replaceTemplateTokens(template.body, report);
+    const to = report.employerEmail || '';
+    const draft = `To: ${to || '[enter client email]'}\nSubject: ${subject}\n\n${body}`;
+    await copyToClipboard(draft);
+    window.open(gmailComposeUrl(to, subject, body), '_blank', 'noopener,noreferrer');
+  }
+
+  async function openFaxGmail() {
+    const rawFax = window.prompt('Enter recipient fax number:');
+    if (rawFax === null) return;
+    const digits = String(rawFax || '').replace(/[^0-9]/g, '');
+    if (digits.length < 7) throw new Error('Recipient fax number is required.');
+    const faxEmail = `${digits}@efaxsend.com`;
+    const template = await chooseTemplate(companyId, report, 'fax');
+    if (!template) return;
+    const filename = await downloadFmcsaPdf(report, companyId);
+    const subject = replaceTemplateTokens(template.subject, report, { faxNumber: digits });
+    const body = replaceTemplateTokens(template.body, report, { faxNumber: digits });
+    const draft = `To: ${faxEmail}\nSubject: ${subject}\n\n${body}\n\nAttach downloaded file: ${filename}`;
+    await copyToClipboard(draft);
+    alert(`The FMCSA PDF was downloaded as ${filename}. Gmail will open now. Attach the downloaded PDF before sending.`);
+    window.open(gmailComposeUrl(faxEmail, subject, body), '_blank', 'noopener,noreferrer');
+  }
+
+  async function markCompleted() {
+    const data = await api(`/api/safety-reports?companyId=${encodeURIComponent(companyId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...report, status: 'Completed' }),
+    });
+    onReportUpdated(data.report || { ...report, status: 'Completed' });
+  }
+
+  const disabled = Boolean(busyAction);
+  return (
+    <div className="safety-links-native">
+      <button type="button" className="phase6-link-button applicant" disabled={disabled} onClick={() => run('Applicant Link', () => makeResponseLink('applicant'))}>Applicant Link</button>
+      <button type="button" className="phase6-link-button employer" disabled={disabled} onClick={() => run('Employer Link', () => makeResponseLink('employer'))}>Employer Link</button>
+      <button type="button" className="phase6-link-button phase12a107-fmcsa-pdf" disabled={disabled} onClick={() => run('FMCSA PDF', () => downloadFmcsaPdf(report, companyId))}>FMCSA PDF</button>
+      <button type="button" className="phase6-link-button fax" disabled={disabled} onClick={() => run('Fax FMCSA', openFaxGmail)}>Fax FMCSA</button>
+      <button type="button" className="phase6-link-button phase12a107-client-gmail" disabled={disabled} onClick={() => run('Client Gmail', openClientGmail)}>Client Gmail</button>
+      <button type="button" className="phase6-link-button phase12a107-mark-completed" disabled={disabled} onClick={() => run('Mark Completed', markCompleted)}>Mark Completed</button>
+      {busyAction ? <small>Working on {busyAction}...</small> : null}
+    </div>
+  );
+}
+
 function Safety({ reports, setReports, company, refresh, companyId, dashboardFilter, clearDashboardFilter }) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
@@ -688,7 +847,7 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
                 <td>{r.followUpDate}</td>
                 <td>{r.prevEmployerName}<small>{r.prevEmployerEmail || 'No email saved'}</small></td>
                 <td className="notes-cell">{r.notes}</td>
-                <td className="safety-links-cell" data-safety-links="true"></td>
+                <td className="safety-links-cell" data-safety-links="native"><SafetyLinks report={r} companyId={companyId} company={company} onReportUpdated={(updated) => setReports((rows) => rows.map((row) => row.id === updated.id ? updated : row))} /></td>
                 <td><div className="row-actions"><button className="icon-btn" onClick={() => { setEditing(r); setMode('edit'); }}><Pencil size={15} /></button><button className="icon-btn danger" onClick={() => deleteReport(r)}><Trash2 size={15} /></button></div></td>
               </tr>
             );
