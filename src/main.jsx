@@ -919,7 +919,7 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
   }
 
   async function makeResponseLink(role) {
-    const data = await api('/api/safety-response-link', {
+    const data = await api('/api/index?path=safety-response-link', {
       method: 'POST',
       body: JSON.stringify({ companyId, fileNumber: report.fileNumber, reportId: report.id, responseRole: role }),
     });
