@@ -2741,6 +2741,182 @@ async function monitoringExportTazworksDetails(companyId: number, fileNumber: st
   }
 }
 
+
+function monitoringNotificationEmailLooksValid(value: any) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+}
+
+function monitoringNotificationFromEmail() {
+  return String(
+    process.env.MONITORING_FROM_EMAIL ||
+    process.env.SAFETY_FROM_EMAIL ||
+    process.env.EMAIL_FROM ||
+    process.env.SMTP_FROM ||
+    process.env.SMTP_USER ||
+    process.env.FAX_FROM ||
+    process.env.FAX_SMTP_USER ||
+    ''
+  ).trim();
+}
+
+function monitoringNotificationReplyToEmail() {
+  return String(
+    process.env.MONITORING_REPLY_TO_EMAIL ||
+    process.env.SAFETY_REPLY_TO_EMAIL ||
+    process.env.EMAIL_REPLY_TO ||
+    monitoringNotificationFromEmail() ||
+    ''
+  ).trim();
+}
+
+function monitoringNotificationEnvRecipients() {
+  const raw = String(process.env.MONITORING_NOTIFY_EMAILS || process.env.MONITORING_NOTIFICATION_EMAILS || process.env.NOTIFICATION_EMAILS || '').trim();
+  if (!raw) return [] as string[];
+  return raw.split(/[;,]/).map((email) => email.trim().toLowerCase()).filter(monitoringNotificationEmailLooksValid);
+}
+
+async function monitoringNotificationRecipients() {
+  const recipients = new Set<string>();
+
+  for (const email of monitoringNotificationEnvRecipients()) recipients.add(email);
+
+  try {
+    const result = await query('select email from notification_emails where "isActive"=true order by id asc');
+    for (const row of result.rows || []) {
+      const email = String(row.email || '').trim().toLowerCase();
+      if (monitoringNotificationEmailLooksValid(email)) recipients.add(email);
+    }
+  } catch (error) {
+    console.error('Monitoring notification email lookup failed', error);
+  }
+
+  return Array.from(recipients);
+}
+
+async function sendMonitoringNotificationEmail(to: string, subject: string, text: string) {
+  const fromEmail = monitoringNotificationFromEmail();
+  const replyToEmail = monitoringNotificationReplyToEmail();
+  const resendApiKey = String(process.env.RESEND_API_KEY || '').trim();
+
+  if (resendApiKey && monitoringNotificationEmailLooksValid(fromEmail)) {
+    const payload: any = {
+      from: fromEmail,
+      to: [to],
+      subject,
+      text,
+      html: text.replace(/\n/g, '<br />')
+    };
+    if (monitoringNotificationEmailLooksValid(replyToEmail)) payload.reply_to = replyToEmail;
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const responsePayload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(responsePayload?.message || responsePayload?.error || `Resend failed with status ${response.status}`);
+    return { provider: 'resend', id: responsePayload?.id || null };
+  }
+
+  const smtpHost = String(process.env.MONITORING_SMTP_HOST || process.env.SMTP_HOST || '').trim();
+  const smtpPort = Number(process.env.MONITORING_SMTP_PORT || process.env.SMTP_PORT || 587);
+  const smtpUser = String(process.env.MONITORING_SMTP_USER || process.env.SMTP_USER || '').trim();
+  const smtpPass = String(process.env.MONITORING_SMTP_PASS || process.env.SMTP_PASS || '').trim();
+  const smtpSecureRaw = String(process.env.MONITORING_SMTP_SECURE || process.env.SMTP_SECURE || '').trim().toLowerCase();
+  const smtpSecure = smtpSecureRaw ? ['1', 'true', 'yes', 'ssl'].includes(smtpSecureRaw) : smtpPort === 465;
+
+  if (smtpHost && smtpUser && smtpPass && monitoringNotificationEmailLooksValid(fromEmail)) {
+    const nodemailerModule: any = await import('nodemailer');
+    const nodemailer = nodemailerModule.default || nodemailerModule;
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+    const sent = await transporter.sendMail({
+      from: fromEmail,
+      to,
+      subject,
+      text,
+      html: text.replace(/\n/g, '<br />'),
+      replyTo: monitoringNotificationEmailLooksValid(replyToEmail) ? replyToEmail : undefined,
+    });
+    return { provider: 'smtp', id: sent?.messageId || null };
+  }
+
+  throw new Error('No monitoring email provider is configured. Add RESEND_API_KEY with EMAIL_FROM/SAFETY_FROM_EMAIL, or SMTP_HOST/SMTP_USER/SMTP_PASS/SMTP_FROM.');
+}
+
+function monitoringNotificationSubject(action: string, applicantName: string, fileNumber: string) {
+  const label = action === 'on' ? 'ON' : 'OFF';
+  const namePart = applicantName ? ` for ${applicantName}` : '';
+  const filePart = fileNumber ? ` #${fileNumber}` : '';
+  return `Monitoring turned ${label}${namePart}${filePart}`.slice(0, 180);
+}
+
+function monitoringNotificationBody(params: { companyName: string; applicantName: string; fileNumber: string; oldStatus: string; nextStatus: string; action: string; user: any; medExpire?: string; mvrStatus?: string; }) {
+  const changedBy = params.user?.displayName || params.user?.username || 'Unknown user';
+  const when = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' });
+  return [
+    `Monitoring was turned ${params.action === 'on' ? 'ON' : 'OFF'}.`,
+    '',
+    `Company: ${params.companyName || 'Unknown'}`,
+    `Applicant: ${params.applicantName || 'Unknown'}`,
+    `File #: ${params.fileNumber || 'N/A'}`,
+    `Previous Status: ${params.oldStatus || 'N/A'}`,
+    `New Status: ${params.nextStatus || 'N/A'}`,
+    `MVR Status: ${params.mvrStatus || 'N/A'}`,
+    `Med Cert Expire: ${params.medExpire || 'N/A'}`,
+    `Changed By: ${changedBy}`,
+    `Changed At: ${when} Central`,
+    '',
+    'This is an automatic SaffHire Monitoring notification.'
+  ].join('\n');
+}
+
+async function sendMonitoringOnOffNotifications(companyId: number, currentRow: any, oldStatus: string, nextStatus: string, action: string, user: any) {
+  const recipients = await monitoringNotificationRecipients();
+  if (!recipients.length) {
+    console.error('Monitoring status changed but no active notification emails are configured.');
+    return { attempted: false, sent: 0, failed: 0, message: 'No active notification emails configured' };
+  }
+
+  const company = await query('select name from companies where id=$1 limit 1', [companyId]).catch(() => ({ rows: [] } as any));
+  const companyName = String(company.rows?.[0]?.name || '').trim();
+  const fileNumber = String(currentRow?.fileNumber || '').trim();
+  const applicantName = String(currentRow?.applicantName || currentRow?.name || '').trim();
+  const subject = monitoringNotificationSubject(action, applicantName, fileNumber);
+  const body = monitoringNotificationBody({
+    companyName,
+    applicantName,
+    fileNumber,
+    oldStatus,
+    nextStatus,
+    action,
+    user,
+    medExpire: String(currentRow?.medExpire || '').trim(),
+    mvrStatus: String(currentRow?.mvrStatus || '').trim(),
+  });
+
+  let sent = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const recipient of recipients) {
+    try {
+      await sendMonitoringNotificationEmail(recipient, subject, body);
+      sent += 1;
+    } catch (error: any) {
+      failed += 1;
+      errors.push(`${recipient}: ${errorMessage(error)}`);
+      console.error('Monitoring notification send failed', recipient, error);
+    }
+  }
+
+  return { attempted: true, sent, failed, message: errors.slice(0, 3).join(' | ') };
+}
+
 async function logMonitoringOnOffChange(companyId: number, currentRow: any, newMonitorStatus: string, user: any) {
   try {
     const oldStatus = normalizeMonitorStatus(currentRow?.monitorStatus);
@@ -2750,6 +2926,9 @@ async function logMonitoringOnOffChange(companyId: number, currentRow: any, newM
     const action = nextStatus === 'On' ? 'on' : 'off';
     const fileNumber = String(currentRow?.fileNumber || '').trim();
     if (!fileNumber) return;
+
+    const notificationResult = await sendMonitoringOnOffNotifications(companyId, currentRow, oldStatus, nextStatus, action, user)
+      .catch((error) => ({ attempted: true, sent: 0, failed: 1, message: errorMessage(error) }));
 
     const nameParts = splitMonitoringExportName(currentRow?.applicantName || currentRow?.name || '');
     const taz = await monitoringExportTazworksDetails(companyId, fileNumber);
@@ -2778,7 +2957,12 @@ async function logMonitoringOnOffChange(companyId: number, currentRow: any, newM
         taz.dlState || '',
         taz.source || '',
         user?.username || user?.displayName || '',
-        JSON.stringify({ previousMonitorStatus: oldStatus, newMonitorStatus: nextStatus, tazworksSource: taz.source || '' })
+        JSON.stringify({
+          previousMonitorStatus: oldStatus,
+          newMonitorStatus: nextStatus,
+          tazworksSource: taz.source || '',
+          emailNotification: notificationResult,
+        })
       ]
     );
   } catch (error) {
