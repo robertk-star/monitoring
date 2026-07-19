@@ -1,14 +1,16 @@
-# Phase 12A-123 — Enforce Client Access Controls
+# Phase 12A-124 — Client Dashboard Totals Fix
 
-Upload these files:
+Upload only:
 
 - api/index.ts
-- src/main.jsx
-- public/client-portal.html
 
-SQL:
-- supabase/migrations/20260718_phase12a121_client_access_options.sql
+No SQL migration is required.
+No Vercel ENV changes are required.
 
-Run the SQL only if it has not already been run.
+What changed:
 
-This phase fixes client access enforcement. Client Admin and Client User accounts are redirected from the main SaffHire admin app into the client portal, and the API now enforces Monitoring/Safety access on the server side.
+- Client Portal dashboard totals are now calculated from all company records, not the limited recent table rows.
+- Monitoring counts are scoped to the signed-in client's company.
+- Safety report counts are scoped to the signed-in client's company.
+- Med Cert Expired and Med Cert 30 Days now only count applicants that are On Monitoring, matching the Monitoring Alerts logic.
+- Access rules are still enforced: if Monitoring is off, Monitoring cards do not show; if Safety Reports is off, Safety cards do not show.
