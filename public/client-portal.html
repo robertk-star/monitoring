@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>SaffHire Client Portal</title>
-  <!-- Phase 12A-129: Client Portal Terminated access controls made visible -->
+  <!-- Phase 12A-132: Client Monitoring totals restored; Terminated banner removed -->
   <style>
     :root{--g:#1fff00;--ink:#0f172a;--muted:#64748b;--line:#dbe3ef;--bg:#f8fafc;--good:#166534;--bad:#991b1b;--warn:#92400e}
     *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
@@ -233,6 +233,19 @@
     bindHeaderButtons();
   }
 
+  function monitoringMetricCards() {
+    const a = state.data?.applicantStats || {};
+    const cards = [
+      metric('Total Monitoring', a.total),
+      metric('On Monitoring', a.on_monitoring),
+      metric('Off Monitoring', a.off_monitoring),
+      metric('Med Cert Expired', a.expired_medical),
+      metric('Med Cert 30 Days', a.expiring_30)
+    ];
+    if (canAccessTerminated()) cards.push(metric('Terminated', a.terminated));
+    return `<div class="grid monitoring-total-grid">${cards.join('')}</div>`;
+  }
+
   function matchesSearch(row, term, keys) {
     if (!term) return true;
     const haystack = keys.map(key => String(row[key] ?? '')).join(' ').toLowerCase();
@@ -282,16 +295,13 @@
       ? (canEditTerminated() ? 'Client-scoped Monitoring records. You can update Monitoring status, notes, and terminated status.' : 'Client-scoped Monitoring records. You can update Monitoring status and notes.')
       : 'Read-only client-scoped Monitoring records.';
     app.className = '';
-    const terminatedNotice = canAccessTerminated()
-      ? `<div class="access-note"><b>Terminated Records access is ON.</b> You can use the filter to show all records or terminated only.${canEditTerminated() ? ' You can also edit the Terminated checkbox.' : ' Editing Terminated is locked because Edit Monitoring is off.'}<button type="button" class="btn neutral" id="show-terminated-only">Show Terminated Only</button></div>`
-      : '';
     app.innerHTML = header('Monitoring', subtitle) +
-      `<section class="card">${terminatedNotice}<div class="toolbar"><input id="monitoring-search" type="search" placeholder="Search by file number, name, status, notes..." value="${esc(state.filters.monitoringSearch)}"><select id="monitoring-filter">${statusOptions}</select>${canEditMonitoring() ? '<button class="btn" id="save-all-monitoring">Save All Changed</button>' : ''}<span class="small">Showing ${rows.length} of ${recentApplicants().length}</span></div>${monitoringTable(rows, true)}</section>`;
+      monitoringMetricCards() +
+      `<section class="card"><div class="toolbar"><input id="monitoring-search" type="search" placeholder="Search by file number, name, status, notes..." value="${esc(state.filters.monitoringSearch)}"><select id="monitoring-filter">${statusOptions}</select>${canEditMonitoring() ? '<button class="btn" id="save-all-monitoring">Save All Changed</button>' : ''}<span class="small">Showing ${rows.length} of ${recentApplicants().length}</span></div>${monitoringTable(rows, true)}</section>`;
     bindHeaderButtons();
     document.getElementById('monitoring-search')?.addEventListener('input', event => { state.filters.monitoringSearch = event.target.value; renderMonitoring(); });
     document.getElementById('monitoring-filter')?.addEventListener('change', event => { state.filters.monitoringStatus = event.target.value; renderMonitoring(); });
     document.getElementById('save-all-monitoring')?.addEventListener('click', saveAllMonitoring);
-    document.getElementById('show-terminated-only')?.addEventListener('click', () => { state.filters.monitoringStatus = 'terminated'; renderMonitoring(); });
     app.querySelectorAll('tr[data-id]').forEach(row => {
       row.querySelectorAll('select, textarea, input[type="checkbox"]').forEach(el => el.addEventListener('change', () => row.classList.add('dirty')));
       row.querySelector('[data-action="save-monitoring"]')?.addEventListener('click', () => saveMonitoringRow(row));
