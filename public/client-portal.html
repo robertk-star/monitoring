@@ -472,7 +472,7 @@
       return;
     }
     app.className = '';
-    app.innerHTML = header('User Admin', 'Add, edit, reset, deactivate, or delete client users.') + '<section class="card">Loading users...</section>';
+    app.innerHTML = header('User Admin', 'Add and manage users created inside this client account.') + '<section class="card">Loading users...</section>';
     bindHeaderButtons();
     try {
       const result = await api('client-users');
@@ -480,9 +480,9 @@
       const roleOptions = state.user?.role === 'admin'
         ? ['client_admin', 'client_user', 'viewer', 'user']
         : ['client_user', 'viewer'];
-      app.innerHTML = header('User Admin / Access', 'Choose exactly what each client portal user can see and edit.') +
+      app.innerHTML = header('User Admin / Access', 'Only users created inside this client account appear here. SaffHire-created accounts remain hidden.') +
         `<section class="card"><h3>Add Client User</h3><form id="add-user-form" class="form-grid"><label>Display Name<input name="displayName" autocomplete="off"></label><label>Email / Username<input name="username" required autocomplete="off"></label><label>Temporary Password<input name="password" required minlength="8" type="password"></label><label>Role<select name="role">${roleOptions.map(role => `<option value="${role}">${roleLabel(role)}</option>`).join('')}</select></label><div style="grid-column:1/-1">${accessFields(DEFAULT_ACCESS, 'add')}${terminatedAccessField(DEFAULT_ACCESS)}</div><button class="btn">Add User</button></form><p class="role-note">Terminated Records is now shown as its own control so it is not missed. To let a user change Terminated, also check Edit Monitoring.</p></section>` +
-        `<section class="card"><h3>Client Users</h3>${usersTable(users, roleOptions)}</section>`;
+        `<section class="card"><h3>Client-Created Users</h3><p class="small">Accounts created by SaffHire in the master admin remain available for login but are not shown or editable here.</p>${usersTable(users, roleOptions)}</section>`;
       bindHeaderButtons();
       bindUsers(roleOptions);
     } catch (error) {
@@ -491,7 +491,7 @@
     }
   }
   function usersTable(users, roleOptions) {
-    if (!users.length) return '<p class="empty">No client users found.</p>';
+    if (!users.length) return '<p class="empty">No users have been created by this client yet.</p>';
     return `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Access</th><th>Terminated Records</th><th>Status</th><th>Last Sign In</th><th>Actions</th></tr></thead><tbody>${users.map(user => `<tr data-user-id="${esc(user.id)}"><td><input data-field="displayName" value="${esc(user.displayName || '')}"></td><td>${esc(user.username)}</td><td><select data-field="role">${roleOptions.map(role => `<option value="${role}" ${user.role === role ? 'selected' : ''}>${roleLabel(role)}</option>`).join('')}</select></td><td>${accessFields(user.clientAccess, 'row')}</td><td class="terminated-cell">${terminatedAccessField(user.clientAccess)}</td><td><select data-field="isActive"><option value="true" ${user.isActive !== false ? 'selected' : ''}>Active</option><option value="false" ${user.isActive === false ? 'selected' : ''}>Inactive</option></select></td><td>${esc(user.lastSignedIn ? new Date(user.lastSignedIn).toLocaleString() : '')}</td><td><button class="btn" data-action="save-user">Save</button> <button class="btn neutral" data-action="reset-user">Reset Password</button> <button class="btn danger" data-action="delete-user">Delete</button></td></tr>`).join('')}</tbody></table></div>`;
   }
   function bindUsers(roleOptions) {
