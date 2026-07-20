@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>SaffHire Client Portal</title>
-  <!-- Phase 12A-133: Dynamic Monitoring totals after edits, syncs, and new records -->
+  <!-- Phase 12A-135: Client Order MVR button and request workflow -->
   <style>
     :root{--g:#1fff00;--ink:#0f172a;--muted:#64748b;--line:#dbe3ef;--bg:#f8fafc;--good:#166534;--bad:#991b1b;--warn:#92400e}
     *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
-    .layout{min-height:100vh;display:grid;grid-template-columns:260px 1fr}aside{background:#0f172a;color:#fff;padding:22px 14px;position:sticky;top:0;height:100vh}.brand{padding:0 10px 18px;border-bottom:1px solid rgba(255,255,255,.14);margin-bottom:16px}.brand h1{margin:0;font-size:24px}.brand p{margin:5px 0 0;color:#cbd5e1;font-weight:700;font-size:13px}.nav-label{margin:18px 10px 8px;color:#94a3b8;font-size:11px;font-weight:1000;letter-spacing:.14em;text-transform:uppercase}nav button{width:100%;border:0;border-radius:13px;color:#e2e8f0;background:transparent;padding:11px;text-align:left;font-weight:900;cursor:pointer;margin:4px 0}nav button.active,nav button:hover{background:rgba(31,255,0,.16);box-shadow:inset 4px 0 0 var(--g);color:#fff}nav button[hidden]{display:none}main{padding:24px}.head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:18px}.head h2{margin:0 0 4px;font-size:28px}.head p{margin:0;color:var(--muted);font-weight:700}.actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:16px;box-shadow:0 8px 24px rgba(15,23,42,.05)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:14px}.metric b{display:block;font-size:28px}.metric span{color:var(--muted);font-weight:800}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:15px;background:#fff}table{width:100%;border-collapse:collapse;background:#fff}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}th{background:#f8fafc;color:#475569;text-transform:uppercase;font-size:12px;white-space:nowrap}td{font-size:14px}.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.toolbar input,.toolbar select,input,select,textarea{border:1px solid #cbd5e1;border-radius:10px;padding:9px 10px;font:inherit;background:#fff}.toolbar input{min-width:260px;flex:1}textarea{width:260px;min-height:54px;resize:vertical}select.on{border-color:var(--g);background:rgba(31,255,0,.16);font-weight:1000}.btn{border:1px solid #16a34a;background:#ecfdf5;color:#166534;border-radius:999px;padding:9px 12px;font-weight:1000;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;justify-content:center}.btn:disabled{opacity:.55;cursor:not-allowed}.danger{border-color:#dc2626;background:#fef2f2;color:#991b1b}.neutral{border-color:#cbd5e1;background:#fff;color:#334155}.purple{border-color:#7c3aed;background:#f5f3ff;color:#5b21b6}.pill{display:inline-flex;border-radius:999px;padding:4px 9px;font-weight:900;font-size:12px;border:1px solid #cbd5e1}.pill.good{background:#ecfdf5;color:#166534;border-color:#bbf7d0}.pill.bad{background:#fef2f2;color:#991b1b;border-color:#fecaca}.pill.warn{background:#fffbeb;color:#92400e;border-color:#fde68a}.dirty td{background:#fffbeb!important}.hide{display:none!important}.toast{position:fixed;right:18px;bottom:18px;z-index:99999;background:#111827;color:#fff;border-radius:12px;padding:12px 14px;box-shadow:0 18px 45px rgba(15,23,42,.25);max-width:460px}.toast.bad{background:#991b1b}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;align-items:end}.form-grid label{font-weight:900;color:#334155;display:grid;gap:6px}.check{display:flex;align-items:center;gap:8px;font-weight:900;color:#334155}.empty{color:#64748b;font-weight:800}.small{font-size:12px;color:#64748b;font-weight:700}.role-note{color:#64748b;margin-top:8px}.status-completed{background:#ecfdf5;color:#166534;border-color:#bbf7d0}.status-open{background:#fff7ed;color:#9a3412;border-color:#fed7aa}.access-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}.access-grid label{display:flex;gap:7px;align-items:center;font-size:12px;font-weight:900;color:#334155}.access-box{border:1px solid #dbe3ef;border-radius:14px;padding:10px;background:#f8fafc}.access-box legend{font-weight:1000;color:#0f172a;padding:0 6px}.terminated-access-option{border:1px solid #fed7aa;background:#fff7ed;border-radius:10px;padding:8px!important;color:#9a3412!important}.access-note{border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:14px;padding:10px 12px;margin-bottom:12px;font-weight:850}.access-note .btn{margin-left:10px}.terminated-cell{min-width:170px}.terminated-cell label{display:flex;gap:8px;align-items:center;font-weight:1000;color:#9a3412}.access-mini{border:1px solid #fed7aa;background:#fff7ed;border-radius:14px;padding:10px;margin-top:8px}.access-mini label{display:flex!important;gap:8px!important;align-items:center!important;font-weight:1000!important;color:#9a3412!important}@media(max-width:860px){.layout{grid-template-columns:1fr}aside{height:auto;position:relative}nav{display:flex;overflow:auto;gap:8px}nav button{white-space:nowrap}main{padding:14px}.head{display:block}.actions{justify-content:flex-start;margin-top:12px}.toolbar input{min-width:100%}textarea{width:220px}}
+    .layout{min-height:100vh;display:grid;grid-template-columns:260px 1fr}aside{background:#0f172a;color:#fff;padding:22px 14px;position:sticky;top:0;height:100vh}.brand{padding:0 10px 18px;border-bottom:1px solid rgba(255,255,255,.14);margin-bottom:16px}.brand h1{margin:0;font-size:24px}.brand p{margin:5px 0 0;color:#cbd5e1;font-weight:700;font-size:13px}.nav-label{margin:18px 10px 8px;color:#94a3b8;font-size:11px;font-weight:1000;letter-spacing:.14em;text-transform:uppercase}nav button{width:100%;border:0;border-radius:13px;color:#e2e8f0;background:transparent;padding:11px;text-align:left;font-weight:900;cursor:pointer;margin:4px 0}nav button.active,nav button:hover{background:rgba(31,255,0,.16);box-shadow:inset 4px 0 0 var(--g);color:#fff}nav button[hidden]{display:none}main{padding:24px}.head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:18px}.head h2{margin:0 0 4px;font-size:28px}.head p{margin:0;color:var(--muted);font-weight:700}.actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:16px;box-shadow:0 8px 24px rgba(15,23,42,.05)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:14px}.metric b{display:block;font-size:28px}.metric span{color:var(--muted);font-weight:800}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:15px;background:#fff}table{width:100%;border-collapse:collapse;background:#fff}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}th{background:#f8fafc;color:#475569;text-transform:uppercase;font-size:12px;white-space:nowrap}td{font-size:14px}.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.toolbar input,.toolbar select,input,select,textarea{border:1px solid #cbd5e1;border-radius:10px;padding:9px 10px;font:inherit;background:#fff}.toolbar input{min-width:260px;flex:1}textarea{width:260px;min-height:54px;resize:vertical}select.on{border-color:var(--g);background:rgba(31,255,0,.16);font-weight:1000}.btn{border:1px solid #16a34a;background:#ecfdf5;color:#166534;border-radius:999px;padding:9px 12px;font-weight:1000;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;justify-content:center}.btn:disabled{opacity:.55;cursor:not-allowed}.danger{border-color:#dc2626;background:#fef2f2;color:#991b1b}.neutral{border-color:#cbd5e1;background:#fff;color:#334155}.purple{border-color:#7c3aed;background:#f5f3ff;color:#5b21b6}.pill{display:inline-flex;border-radius:999px;padding:4px 9px;font-weight:900;font-size:12px;border:1px solid #cbd5e1}.pill.good{background:#ecfdf5;color:#166534;border-color:#bbf7d0}.pill.bad{background:#fef2f2;color:#991b1b;border-color:#fecaca}.pill.warn{background:#fffbeb;color:#92400e;border-color:#fde68a}.dirty td{background:#fffbeb!important}.hide{display:none!important}.toast{position:fixed;right:18px;bottom:18px;z-index:99999;background:#111827;color:#fff;border-radius:12px;padding:12px 14px;box-shadow:0 18px 45px rgba(15,23,42,.25);max-width:460px}.toast.bad{background:#991b1b}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;align-items:end}.form-grid label{font-weight:900;color:#334155;display:grid;gap:6px}.check{display:flex;align-items:center;gap:8px;font-weight:900;color:#334155}.empty{color:#64748b;font-weight:800}.small{font-size:12px;color:#64748b;font-weight:700}.role-note{color:#64748b;margin-top:8px}.status-completed{background:#ecfdf5;color:#166534;border-color:#bbf7d0}.status-open{background:#fff7ed;color:#9a3412;border-color:#fed7aa}.access-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}.access-grid label{display:flex;gap:7px;align-items:center;font-size:12px;font-weight:900;color:#334155}.access-box{border:1px solid #dbe3ef;border-radius:14px;padding:10px;background:#f8fafc}.access-box legend{font-weight:1000;color:#0f172a;padding:0 6px}.terminated-access-option{border:1px solid #fed7aa;background:#fff7ed;border-radius:10px;padding:8px!important;color:#9a3412!important}.access-note{border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:14px;padding:10px 12px;margin-bottom:12px;font-weight:850}.access-note .btn{margin-left:10px}.terminated-cell{min-width:170px}.terminated-cell label{display:flex;gap:8px;align-items:center;font-weight:1000;color:#9a3412}.access-mini{border:1px solid #fed7aa;background:#fff7ed;border-radius:14px;padding:10px;margin-top:8px}.access-mini label{display:flex!important;gap:8px!important;align-items:center!important;font-weight:1000!important;color:#9a3412!important}.mvr-order-cell{min-width:122px;white-space:nowrap}.mvr-order-cell .btn{padding:7px 11px}.mvr-order-cell .pill{padding:6px 10px}@media(max-width:860px){.layout{grid-template-columns:1fr}aside{height:auto;position:relative}nav{display:flex;overflow:auto;gap:8px}nav button{white-space:nowrap}main{padding:14px}.head{display:block}.actions{justify-content:flex-start;margin-top:12px}.toolbar input{min-width:100%}textarea{width:220px}}
   </style>
 </head>
 <body>
@@ -306,10 +306,21 @@
     if (!rows.length) return '<p class="empty">No monitoring records found.</p>';
     const showTerminatedColumn = canAccessTerminated();
     const terminatedHeader = showTerminatedColumn ? '<th>Terminated</th>' : '';
-    return `<div class="table-wrap"><table><thead><tr><th>File #</th><th>Name</th><th>Order Date</th><th>Monitoring</th><th>MVR Status</th><th>Med Expire</th><th>Notes</th>${terminatedHeader}${edit ? '<th>Save</th>' : ''}</tr></thead><tbody>${rows.map(row => {
+    const mvrHeader = edit ? 'Order MVR' : 'MVR Status';
+    return `<div class="table-wrap"><table><thead><tr><th>File #</th><th>Name</th><th>Order Date</th><th>Monitoring</th><th>${mvrHeader}</th><th>Med Expire</th><th>Notes</th>${terminatedHeader}${edit ? '<th>Save</th>' : ''}</tr></thead><tbody>${rows.map(row => {
       const editable = edit && canEditMonitoring();
+      const orderRequested = String(row.mvrStatus || '').trim().toLowerCase() === 'order requested';
+      const orderMvrCell = !edit
+        ? `<td>${esc(row.mvrStatus)}</td>`
+        : row.terminated
+          ? '<td class="mvr-order-cell"><span class="pill warn">Not Available</span></td>'
+          : orderRequested
+            ? '<td class="mvr-order-cell"><button class="btn" disabled>Requested</button></td>'
+            : editable
+              ? '<td class="mvr-order-cell"><button class="btn" data-action="order-mvr">Order MVR</button></td>'
+              : '<td class="mvr-order-cell"><span class="small">View only</span></td>';
       const terminatedCell = showTerminatedColumn ? `<td>${editable && canEditTerminated() ? `<label class="check"><input type="checkbox" data-field="terminated" ${row.terminated ? 'checked' : ''}> Yes</label>` : (row.terminated ? '<span class="pill warn">Yes</span>' : '<span class="pill good">No</span>')}</td>` : '';
-      return `<tr data-id="${esc(row.id)}"><td><b>${esc(row.fileNumber)}</b></td><td>${esc(row.name)}</td><td>${esc(fmt(row.orderDate))}</td><td>${editable ? `<select data-field="monitorStatus" class="${row.monitorStatus === 'On' ? 'on' : ''}"><option value="Off" ${row.monitorStatus !== 'On' ? 'selected' : ''}>Off</option><option value="On" ${row.monitorStatus === 'On' ? 'selected' : ''}>On</option></select>` : monitoringPill(row.monitorStatus)}</td><td>${esc(row.mvrStatus)}</td><td>${esc(row.medExpire)}</td><td>${editable ? `<textarea data-field="notes">${esc(row.notes || '')}</textarea>` : esc(row.notes)}</td>${terminatedCell}${editable ? '<td><button class="btn" data-action="save-monitoring">Save</button></td>' : ''}</tr>`;
+      return `<tr data-id="${esc(row.id)}" data-file-number="${esc(row.fileNumber)}" data-applicant-name="${esc(row.name)}"><td><b>${esc(row.fileNumber)}</b></td><td>${esc(row.name)}</td><td>${esc(fmt(row.orderDate))}</td><td>${editable ? `<select data-field="monitorStatus" class="${row.monitorStatus === 'On' ? 'on' : ''}"><option value="Off" ${row.monitorStatus !== 'On' ? 'selected' : ''}>Off</option><option value="On" ${row.monitorStatus === 'On' ? 'selected' : ''}>On</option></select>` : monitoringPill(row.monitorStatus)}</td>${orderMvrCell}<td>${esc(row.medExpire)}</td><td>${editable ? `<textarea data-field="notes">${esc(row.notes || '')}</textarea>` : esc(row.notes)}</td>${terminatedCell}${editable ? '<td><button class="btn" data-action="save-monitoring">Save</button></td>' : ''}</tr>`;
     }).join('')}</tbody></table></div>`;
   }
   function renderMonitoring() {
@@ -345,6 +356,7 @@
         el.addEventListener('change', () => row.classList.add('dirty'));
       });
       row.querySelector('[data-action="save-monitoring"]')?.addEventListener('click', () => saveMonitoringRow(row));
+      row.querySelector('[data-action="order-mvr"]')?.addEventListener('click', () => orderMvr(row));
     });
   }
   function renderTerminated() {
@@ -370,6 +382,7 @@
         el.addEventListener('change', () => row.classList.add('dirty'));
       });
       row.querySelector('[data-action="save-monitoring"]')?.addEventListener('click', () => saveMonitoringRow(row));
+      row.querySelector('[data-action="order-mvr"]')?.addEventListener('click', () => orderMvr(row));
     });
   }
 
@@ -382,6 +395,40 @@
       channel.close();
     } catch {}
   }
+  async function orderMvr(row) {
+    if (!row || !canEditMonitoring()) return toast('This account does not have permission to order an MVR.', true);
+    if (row.classList.contains('dirty')) return toast('Save this row before ordering the MVR.', true);
+    const applicantId = Number(row.dataset.id || 0);
+    const fileNumber = String(row.dataset.fileNumber || '').trim();
+    const applicantName = String(row.dataset.applicantName || '').trim();
+    if (!applicantId) return toast('Applicant id is missing.', true);
+    if (!confirm(`Order an MVR for ${applicantName || 'this applicant'}${fileNumber ? ` (File #${fileNumber})` : ''}?`)) return;
+
+    const button = row.querySelector('[data-action="order-mvr"]');
+    const old = button?.textContent || 'Order MVR';
+    if (button) { button.disabled = true; button.textContent = 'Requesting...'; }
+    try {
+      const result = await api('client-order-mvr', { method: 'POST', body: JSON.stringify({ applicantId }) });
+      const notification = result.notification || {};
+      if (result.alreadyRequested) {
+        toast('An MVR has already been requested for this applicant.');
+      } else if (notification.attempted && Number(notification.sent || 0) > 0) {
+        toast(`MVR order requested. Notification sent to ${notification.sent} recipient${Number(notification.sent) === 1 ? '' : 's'}.`);
+      } else if (notification.attempted && Number(notification.failed || 0) > 0) {
+        toast(`MVR order requested, but the notification email failed: ${notification.message || 'Unknown email error'}`, true);
+      } else if (notification.message) {
+        toast(`MVR order requested. ${notification.message}`, true);
+      } else {
+        toast('MVR order requested.');
+      }
+      signalMonitoringDataChanged('client-mvr-order-request', { applicantId, fileNumber });
+      await refreshPortalData({ force: true });
+    } catch (error) {
+      toast(error.message || 'Could not request the MVR.', true);
+      if (button && button.isConnected) { button.disabled = false; button.textContent = old; }
+    }
+  }
+
   async function saveMonitoringRow(row, { refreshAfterSave = true, signalAfterSave = true } = {}) {
     const button = row.querySelector('[data-action="save-monitoring"]');
     const old = button?.textContent || 'Save';
