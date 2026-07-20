@@ -1390,7 +1390,7 @@
   function startLegacyButtonObserver() {
     if (phase12a83LegacyButtonObserverStarted || !document.body) return;
     phase12a83LegacyButtonObserverStarted = true;
-    const labelsToCatch = /(^|\s)(pdf|email|copy)(\s|$)|open gmail|final packet|copy client draft/i;
+    const labelsToCatch = /(^|\s)(pdf|email|copy)(\s|$)|open gmail|final packet|copy client draft|client gmail|mark completed|fmcsa pdf|applicant link|employer link|fax fmcsa/i;
     const observer = new MutationObserver((mutations) => {
       if (!isSafetyPage() || phase12a80EmailSettingsActive) return;
       for (const mutation of mutations) {
@@ -2645,29 +2645,72 @@
 })();
 
 
-/* PHASE12A114_NATIVE_SAFETY_LINK_CLEANUP: remove stale duplicate Safety buttons from old patch scripts. */
+/* PHASE12A136_NATIVE_SAFETY_LINK_SINGLE_SOURCE: React owns every Safety link button. */
 (function () {
   const safetyLabels = new Set(['applicant link', 'employer link', 'fmcsa pdf', 'fax fmcsa', 'client gmail', 'mark completed']);
-  function normalize(value) { return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
-  function isSafetyPage() {
-    return Array.from(document.querySelectorAll('.page-header h1,h1')).some((h) => normalize(h.textContent) === 'safety performance reports');
+  const legacySelectors = [
+    '.phase7-tools',
+    '.phase7a-fmcsa',
+    '.phase12a89-links-layout',
+    '.phase12a108-links-layout',
+    '.phase6-link-group',
+    '.phase12a89-link-color-group',
+    '[data-phase12a107-managed]',
+    '[data-phase12a108-managed]',
+    '[data-phase12a108-action]'
+  ].join(',');
+
+  function normalize(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
   }
+
+  function isSafetyPage() {
+    return Array.from(document.querySelectorAll('.page-header h1,h1,.head h2'))
+      .some((heading) => normalize(heading.textContent) === 'safety performance reports');
+  }
+
+  function removeLegacyPanels() {
+    document.querySelectorAll('#phase7-panel,#phase7a-panel').forEach((panel) => panel.remove());
+  }
+
   function cleanupNativeSafetyRows() {
     if (!isSafetyPage()) return;
+    removeLegacyPanels();
+
     document.querySelectorAll('tr').forEach((row) => {
       const native = row.querySelector('.safety-links-native');
       if (!native) return;
-      row.querySelectorAll('td, th').forEach((cell) => {
-        if (cell.contains(native)) return;
-        cell.querySelectorAll('button, a').forEach((button) => {
-          const label = normalize(button.textContent);
-          if (safetyLabels.has(label)) button.remove();
+
+      // The native React group must be the only content inside the Links cell.
+      // Old phase7/phase7a scripts inserted their buttons into this same cell,
+      // which is why earlier cleanup code missed them.
+      const nativeCell = native.closest('td,th');
+      if (nativeCell) {
+        Array.from(nativeCell.children).forEach((child) => {
+          if (child !== native) child.remove();
         });
-        cell.querySelectorAll('.phase12a89-links-layout,.phase12a108-links-layout,.phase6-link-group,.phase12a89-link-color-group').forEach((wrapper) => {
-          if (!wrapper.querySelector('button, a') && !normalize(wrapper.textContent)) wrapper.remove();
-        });
+      }
+
+      // Remove any legacy Safety action found anywhere else in the row.
+      row.querySelectorAll(legacySelectors).forEach((element) => {
+        if (!element.closest('.safety-links-native')) element.remove();
+      });
+      row.querySelectorAll('button,a').forEach((button) => {
+        if (button.closest('.safety-links-native')) return;
+        if (safetyLabels.has(normalize(button.textContent))) button.remove();
+      });
+
+      // React should render one of each action. Keep the first if an old browser
+      // render or extension ever duplicates a button inside the native group.
+      const seen = new Set();
+      native.querySelectorAll('button,a').forEach((button) => {
+        const label = normalize(button.textContent);
+        if (!safetyLabels.has(label)) return;
+        if (seen.has(label)) button.remove();
+        else seen.add(label);
       });
     });
+
     const nativeModalOpen = document.querySelector('.safety-modal-backdrop');
     if (nativeModalOpen) {
       document.querySelectorAll('#phase12a78-fax-modal,#phase12a92-client-modal,#phase6-modal').forEach((modal) => {
@@ -2676,14 +2719,22 @@
       });
     }
   }
+
   let queued = false;
-  function queue() {
+  function queueCleanup() {
     if (queued) return;
     queued = true;
-    requestAnimationFrame(() => { queued = false; cleanupNativeSafetyRows(); });
+    requestAnimationFrame(() => {
+      queued = false;
+      cleanupNativeSafetyRows();
+    });
   }
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', cleanupNativeSafetyRows);
   else cleanupNativeSafetyRows();
-  setInterval(cleanupNativeSafetyRows, 250);
-  if (document.body) new MutationObserver(queue).observe(document.body, { childList: true, subtree: true });
+
+  // MutationObserver removes a legacy insertion before it can persist. The slower
+  // interval is only a fallback for unusual browser/script timing.
+  if (document.body) new MutationObserver(queueCleanup).observe(document.body, { childList: true, subtree: true });
+  setInterval(cleanupNativeSafetyRows, 1000);
 })();
