@@ -1,34 +1,29 @@
-# Phase 12A-136 — Permanent Safety Button Deduplication
+# Phase 12A-137 — Sortable Client Monitoring Headers
 
-Upload these files to the same paths in `robertk-saffhire/monitoring`:
+Upload this file to the same path in `robertk-saffhire/monitoring`:
 
-- `public/phase6.js`
-- `public/phase7.js`
-- `public/phase7a-fmcsa.js`
-
-## Root cause
-
-The native React `SafetyLinks` component already renders one working set of Safety Report actions. Two older scripts were still running on timers:
-
-- `public/phase7.js` inserted another `Client Gmail` and `Mark Completed` group.
-- `public/phase7a-fmcsa.js` inserted another `FMCSA PDF` button.
-
-The older cleanup skipped the Links cell whenever it found the native React group, so legacy buttons inserted into that same cell survived.
+- `public/client-portal.html`
 
 ## What changed
 
-- Retired the Phase 7 and Phase 7A row-button injectors.
-- Removed their old informational panels.
-- Made the Phase 6 cleanup treat the React `.safety-links-native` group as the only allowed content in the Links cell.
-- Removed duplicate Safety action buttons from every other cell in the same row.
-- Added a MutationObserver so a stale/cached legacy insertion is removed immediately.
-- Kept one working button for each action:
-  - Applicant Link
-  - Employer Link
-  - FMCSA PDF
-  - Fax FMCSA
-  - Client Gmail
-  - Mark Completed
+On the client portal Monitoring page, every data header is now sortable:
+
+- File #
+- Name
+- Order Date
+- Monitoring
+- Order MVR
+- Med Expire
+- Notes
+- Terminated, when the user has Terminated Records access
+
+The Save header remains non-sortable.
+
+Click a header once for ascending order and again for descending order. The active header shows an up or down arrow. Inactive sortable headers show a neutral two-way arrow.
+
+The dedicated Terminated page uses the same sortable table behavior.
+
+Sorting is performed from the client portal data and remains selected after refreshes and automatic data updates. If a row has unsaved changes, sorting is blocked with a message so typed notes or status changes are not accidentally discarded.
 
 ## SQL migration
 
@@ -37,3 +32,8 @@ No.
 ## Vercel environment variables
 
 No changes.
+
+## Validation
+
+- The JavaScript extracted from `public/client-portal.html` passed `node --check`.
+- The build starts from the current Phase 12A-135 client portal file on GitHub main.
