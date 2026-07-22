@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>SaffHire Client Portal</title>
-  <!-- Phase 12A-138: Clickable client Monitoring total cards -->
+  <!-- Phase 12A-144: Clickable client Dashboard cards with Monitoring and Safety filters -->
   <style>
     :root{--g:#1fff00;--ink:#0f172a;--muted:#64748b;--line:#dbe3ef;--bg:#f8fafc;--good:#166534;--bad:#991b1b;--warn:#92400e}
     *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
@@ -139,8 +139,9 @@
   function header(title, subtitle) {
     return `<div class="head"><div><h2>${esc(title)}</h2><p>${esc(subtitle || '')}</p></div><div class="actions"><button class="btn neutral" id="refresh-btn">Refresh</button><button class="btn danger" id="logout-btn">Logout</button></div></div>`;
   }
-  function metric(label, value) {
-    return `<div class="card metric"><b>${esc(value ?? 0)}</b><span>${esc(label)}</span></div>`;
+  function metric(label, value, page = '', filter = '') {
+    if (!page) return `<div class="card metric"><b>${esc(value ?? 0)}</b><span>${esc(label)}</span></div>`;
+    return `<button type="button" class="card metric metric-filter-btn dashboard-metric-btn" data-dashboard-card-page="${esc(page)}" data-dashboard-card-filter="${esc(filter)}" title="Open ${esc(label)} details"><b>${esc(value ?? 0)}</b><span>${esc(label)}</span></button>`;
   }
   function statusPill(status) {
     const raw = String(status || '');
@@ -256,11 +257,22 @@
     const metricCards = [];
     const sections = [];
     if (canViewMonitoring()) {
-      metricCards.push(metric('Total Monitoring', a.total), metric('On Monitoring', a.on_monitoring), metric('Off Monitoring', a.off_monitoring), metric('Med Cert Expired', a.expired_medical), metric('Med Cert 30 Days', a.expiring_30));
+      const totalMonitoringFilter = canAccessTerminated() ? 'all' : 'active';
+      metricCards.push(
+        metric('Total Monitoring', a.total, 'monitoring', totalMonitoringFilter),
+        metric('On Monitoring', a.on_monitoring, 'monitoring', 'on'),
+        metric('Off Monitoring', a.off_monitoring, 'monitoring', 'off'),
+        metric('Med Cert Expired', a.expired_medical, 'monitoring', 'expired'),
+        metric('Med Cert 30 Days', a.expiring_30, 'monitoring', 'expiring30')
+      );
       sections.push(`<section class="card"><h3>Recent Monitoring</h3>${monitoringTable(recentApplicants().slice(0, 10), false)}</section>`);
     }
     if (canViewSafety()) {
-      metricCards.push(metric('Safety Reports', s.total), metric('Open Safety', s.open), metric('Completed Safety', s.completed));
+      metricCards.push(
+        metric('Safety Reports', s.total, 'safety', 'all'),
+        metric('Open Safety', s.open, 'safety', 'open'),
+        metric('Completed Safety', s.completed, 'safety', 'completed')
+      );
       sections.push(`<section class="card"><h3>Recent Safety Reports</h3>${safetyTable(recentSafety().slice(0, 10))}</section>`);
     }
     app.className = '';
@@ -268,6 +280,31 @@
       (metricCards.length ? `<div class="grid">${metricCards.join('')}</div>` : '<section class="card"><p class="empty">No dashboard sections are enabled for this account.</p></section>') +
       sections.join('');
     bindHeaderButtons();
+    bindDashboardMetricCards();
+  }
+
+  function bindDashboardMetricCards() {
+    app.querySelectorAll('[data-dashboard-card-page]').forEach(button => {
+      button.addEventListener('click', () => {
+        const page = String(button.dataset.dashboardCardPage || '');
+        const filter = String(button.dataset.dashboardCardFilter || 'all');
+
+        if (page === 'monitoring' && canViewMonitoring()) {
+          state.filters.monitoringSearch = '';
+          state.filters.monitoringStatus = filter;
+          state.page = 'monitoring';
+          render();
+          return;
+        }
+
+        if (page === 'safety' && canViewSafety()) {
+          state.filters.safetySearch = '';
+          state.filters.safetyStatus = filter;
+          state.page = 'safety';
+          render();
+        }
+      });
+    });
   }
 
   function monitoringMetricCard(label, value, filter) {
@@ -587,9 +624,12 @@
 
   function safetyRowsFiltered() {
     const term = state.filters.safetySearch;
-    const status = state.filters.safetyStatus;
+    const status = String(state.filters.safetyStatus || 'all');
     return recentSafety().filter(row => {
-      if (status !== 'all' && String(row.status || '') !== status) return false;
+      const rowStatus = String(row.status || '');
+      if (status === 'open' && rowStatus === 'Completed') return false;
+      if (status === 'completed' && rowStatus !== 'Completed') return false;
+      if (!['all', 'open', 'completed'].includes(status) && rowStatus !== status) return false;
       return matchesSearch(row, term, ['fileNumber', 'applicantName', 'status', 'prevEmployerName', 'notes']);
     });
   }
@@ -605,10 +645,19 @@
       return;
     }
     const rows = safetyRowsFiltered();
-    const statuses = ['all','Consent Needed','Consent Given','S1 Complete','Emp Sent','Emp Complete','Completed'];
+    const statuses = [
+      ['all', 'All statuses'],
+      ['open', 'Open Safety'],
+      ['Consent Needed', 'Consent Needed'],
+      ['Consent Given', 'Consent Given'],
+      ['S1 Complete', 'S1 Complete'],
+      ['Emp Sent', 'Emp Sent'],
+      ['Emp Complete', 'Emp Complete'],
+      ['completed', 'Completed']
+    ];
     app.className = '';
     app.innerHTML = header('Safety Reports', 'Read-only client-scoped Safety Performance reports.') +
-      `<section class="card"><div class="toolbar"><input id="safety-search" type="search" placeholder="Search by file number, applicant, employer, notes..." value="${esc(state.filters.safetySearch)}"><select id="safety-filter">${statuses.map(status => `<option value="${esc(status)}" ${state.filters.safetyStatus === status ? 'selected' : ''}>${esc(status === 'all' ? 'All statuses' : status)}</option>`).join('')}</select><span class="small">Showing ${rows.length} of ${recentSafety().length}</span></div>${safetyTable(rows)}</section>`;
+      `<section class="card"><div class="toolbar"><input id="safety-search" type="search" placeholder="Search by file number, applicant, employer, notes..." value="${esc(state.filters.safetySearch)}"><select id="safety-filter">${statuses.map(([value, label]) => `<option value="${esc(value)}" ${state.filters.safetyStatus === value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select><span class="small">Showing ${rows.length} of ${recentSafety().length}</span></div>${safetyTable(rows)}</section>`;
     bindHeaderButtons();
     document.getElementById('safety-search')?.addEventListener('input', event => { state.filters.safetySearch = event.target.value; renderSafety(); });
     document.getElementById('safety-filter')?.addEventListener('change', event => { state.filters.safetyStatus = event.target.value; renderSafety(); });
