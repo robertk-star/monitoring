@@ -1,18 +1,21 @@
-# Phase 12A-148 — SaffHire Admin DOB Format
+# Phase 12A-149 — Safety Performance Horizontal Scrolling
 
 Upload only:
 
 - `index.html`
-- `public/phase12a148-admin-dob-format.js`
+- `public/client-portal.html`
+- `public/phase12a149-safety-horizontal-scroll.js`
 
-What changed:
+## What changed
 
-- DOB values on the SaffHire admin side display as `MM/DD/YYYY`.
-- Example: `2026-07-05` displays as `07/05/2026`.
-- Existing DOB inputs are reformatted when they load.
-- Typed DOB values are normalized when leaving the field or saving.
-- Future rows added after refresh or sync are formatted automatically.
-- Client portal pages are not changed.
+- Makes Safety Performance tables horizontally scrollable for SaffHire Admins, SaffHire Users, viewers, Client Admins, and Client Users.
+- Keeps a visible horizontal scrollbar when the table is wider than the screen.
+- Supports mouse/trackpad scrolling and touch swiping.
+- Reapplies automatically after React page changes, client portal refreshes, filters, auto-sync updates, and newly loaded reports.
+- Leaves Monitoring and unrelated tables unchanged.
 
-SQL migration: No
-Vercel environment variables: No
+## Deployment
+
+- SQL migration: No
+- Vercel environment variables: No
+- Hard refresh once after deployment.
