@@ -1161,9 +1161,9 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
 function SyncedHorizontalScrollTable({ children, watchKey }) {
   const topRef = useRef(null);
   const bottomRef = useRef(null);
+  const contentRef = useRef(null);
   const syncingRef = useRef(false);
-  const [contentWidth, setContentWidth] = useState(0);
-  const [showTopScroll, setShowTopScroll] = useState(false);
+  const [contentWidth, setContentWidth] = useState(2);
 
   useEffect(() => {
     let frame = 0;
@@ -1171,26 +1171,39 @@ function SyncedHorizontalScrollTable({ children, watchKey }) {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const bottom = bottomRef.current;
-        if (!bottom) return;
-        const width = Math.max(bottom.scrollWidth, bottom.clientWidth);
-        setContentWidth(width);
-        setShowTopScroll(bottom.scrollWidth > bottom.clientWidth + 1);
+        const content = contentRef.current;
+        if (!bottom || !content) return;
+
+        const measuredWidth = Math.ceil(Math.max(
+          bottom.scrollWidth || 0,
+          content.scrollWidth || 0,
+          content.getBoundingClientRect().width || 0,
+          bottom.clientWidth + 2,
+        ));
+
+        // Never let a temporary React/layout measurement collapse the top scrollbar.
+        setContentWidth((current) => Math.max(current, measuredWidth));
         if (topRef.current) topRef.current.scrollLeft = bottom.scrollLeft;
       });
     };
 
     update();
+    const settleTimer = window.setTimeout(update, 150);
     window.addEventListener('resize', update);
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
-    if (observer && bottomRef.current) {
-      observer.observe(bottomRef.current);
-      if (bottomRef.current.firstElementChild) observer.observe(bottomRef.current.firstElementChild);
-    }
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    resizeObserver?.observe(bottomRef.current);
+    resizeObserver?.observe(contentRef.current);
+
+    const mutationObserver = typeof MutationObserver !== 'undefined' ? new MutationObserver(update) : null;
+    mutationObserver?.observe(contentRef.current, { childList: true, subtree: true, characterData: true });
 
     return () => {
       cancelAnimationFrame(frame);
+      window.clearTimeout(settleTimer);
       window.removeEventListener('resize', update);
-      observer?.disconnect();
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
     };
   }, [watchKey]);
 
@@ -1209,24 +1222,28 @@ function SyncedHorizontalScrollTable({ children, watchKey }) {
         aria-label="Safety reports horizontal scrollbar"
         onScroll={(event) => syncScroll(event.currentTarget, bottomRef.current)}
         style={{
-          display: showTopScroll ? 'block' : 'none',
+          display: 'block',
           width: '100%',
           maxWidth: '100%',
-          overflowX: 'auto',
+          overflowX: 'scroll',
           overflowY: 'hidden',
-          height: 18,
+          scrollbarGutter: 'stable',
+          minHeight: 20,
+          height: 20,
           marginBottom: 8,
         }}
       >
-        <div aria-hidden="true" style={{ width: contentWidth, height: 1 }} />
+        <div aria-hidden="true" style={{ width: contentWidth, minWidth: contentWidth, height: 1 }} />
       </div>
       <div
         ref={bottomRef}
         className="safety-bottom-horizontal-scroll"
         onScroll={(event) => syncScroll(event.currentTarget, topRef.current)}
-        style={{ width: '100%', maxWidth: '100%', overflowX: 'auto' }}
+        style={{ width: '100%', maxWidth: '100%', overflowX: 'auto', scrollbarGutter: 'stable' }}
       >
-        {children}
+        <div ref={contentRef} style={{ width: 'max-content', minWidth: '100%' }}>
+          {children}
+        </div>
       </div>
     </>
   );
