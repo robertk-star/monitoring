@@ -1316,7 +1316,7 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
         {!filtered.length ? <div className="empty">No Safety Performance reports found.</div> : null}
       </section>
       <section className="card wide-card helper-card">
-        <h2><Printer size={18} /> Phase 4 Safety Performance Workflow</h2>
+        <h2><Printer size={18} /> Safety Performance Workflow</h2>
         <p><b>PDF</b> opens a printable report from the Supabase record. Choose “Save as PDF” in the browser print window.</p>
         <p><b>Email</b> copies a draft, then opens your email client when the previous employer email is saved. Nothing is sent automatically.</p>
       </section>
