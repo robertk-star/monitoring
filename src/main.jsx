@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { Activity, ArrowLeft, ClipboardCheck, Copy, Database, LogOut, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Settings, ShieldCheck, Trash2, Truck, UserCog, X } from 'lucide-react';
@@ -1157,6 +1157,81 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
   );
 }
 
+
+function SyncedHorizontalScrollTable({ children, watchKey }) {
+  const topRef = useRef(null);
+  const bottomRef = useRef(null);
+  const syncingRef = useRef(false);
+  const [contentWidth, setContentWidth] = useState(0);
+  const [showTopScroll, setShowTopScroll] = useState(false);
+
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const bottom = bottomRef.current;
+        if (!bottom) return;
+        const width = Math.max(bottom.scrollWidth, bottom.clientWidth);
+        setContentWidth(width);
+        setShowTopScroll(bottom.scrollWidth > bottom.clientWidth + 1);
+        if (topRef.current) topRef.current.scrollLeft = bottom.scrollLeft;
+      });
+    };
+
+    update();
+    window.addEventListener('resize', update);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    if (observer && bottomRef.current) {
+      observer.observe(bottomRef.current);
+      if (bottomRef.current.firstElementChild) observer.observe(bottomRef.current.firstElementChild);
+    }
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', update);
+      observer?.disconnect();
+    };
+  }, [watchKey]);
+
+  const syncScroll = (source, target) => {
+    if (!target || syncingRef.current) return;
+    syncingRef.current = true;
+    target.scrollLeft = source.scrollLeft;
+    requestAnimationFrame(() => { syncingRef.current = false; });
+  };
+
+  return (
+    <>
+      <div
+        ref={topRef}
+        className="safety-top-horizontal-scroll"
+        aria-label="Safety reports horizontal scrollbar"
+        onScroll={(event) => syncScroll(event.currentTarget, bottomRef.current)}
+        style={{
+          display: showTopScroll ? 'block' : 'none',
+          width: '100%',
+          maxWidth: '100%',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          height: 18,
+          marginBottom: 8,
+        }}
+      >
+        <div aria-hidden="true" style={{ width: contentWidth, height: 1 }} />
+      </div>
+      <div
+        ref={bottomRef}
+        className="safety-bottom-horizontal-scroll"
+        onScroll={(event) => syncScroll(event.currentTarget, topRef.current)}
+        style={{ width: '100%', maxWidth: '100%', overflowX: 'auto' }}
+      >
+        {children}
+      </div>
+    </>
+  );
+}
+
 function Safety({ reports, setReports, company, refresh, companyId, dashboardFilter, clearDashboardFilter }) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
@@ -1201,24 +1276,26 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
       <DashboardFilterBanner filter={activeDashboardFilter} onClear={clearDashboardFilter} />
       <section className="card toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search file #, applicant, employer, notes..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select></section>
       <section className="card table-card">
-        <table>
-          <thead><tr><th>File #</th><th>Applicant</th><th>Created</th><th>Status</th><th>Follow Up</th><th>Previous Employer</th><th>Notes</th><th>Links</th><th></th></tr></thead>
-          <tbody>{filtered.map((r) => {
-            return (
-              <tr key={r.id}>
-                <td><b>{r.fileNumber}</b></td>
-                <td>{r.applicantName}</td>
-                <td>{r.created}</td>
-                <td><span className={`status-chip ${r.status?.replaceAll(' ', '-').toLowerCase()}`}>{r.status}</span></td>
-                <td>{r.followUpDate}</td>
-                <td>{r.prevEmployerName}<small>{r.prevEmployerEmail || 'No email saved'}</small></td>
-                <td className="notes-cell">{r.notes}</td>
-                <td className="safety-links-cell" data-safety-links="native"><SafetyLinks report={r} companyId={companyId} company={company} onReportUpdated={(updated) => setReports((rows) => rows.map((row) => row.id === updated.id ? updated : row))} /></td>
-                <td><div className="row-actions"><button className="icon-btn" onClick={() => { setEditing(r); setMode('edit'); }}><Pencil size={15} /></button><button className="icon-btn danger" onClick={() => deleteReport(r)}><Trash2 size={15} /></button></div></td>
-              </tr>
-            );
-          })}</tbody>
-        </table>
+        <SyncedHorizontalScrollTable watchKey={`${filtered.length}:${reports.length}:${status}:${query}`}>
+          <table>
+            <thead><tr><th>File #</th><th>Applicant</th><th>Created</th><th>Status</th><th>Follow Up</th><th>Previous Employer</th><th>Notes</th><th>Links</th><th></th></tr></thead>
+            <tbody>{filtered.map((r) => {
+              return (
+                <tr key={r.id}>
+                  <td><b>{r.fileNumber}</b></td>
+                  <td>{r.applicantName}</td>
+                  <td>{r.created}</td>
+                  <td><span className={`status-chip ${r.status?.replaceAll(' ', '-').toLowerCase()}`}>{r.status}</span></td>
+                  <td>{r.followUpDate}</td>
+                  <td>{r.prevEmployerName}<small>{r.prevEmployerEmail || 'No email saved'}</small></td>
+                  <td className="notes-cell">{r.notes}</td>
+                  <td className="safety-links-cell" data-safety-links="native"><SafetyLinks report={r} companyId={companyId} company={company} onReportUpdated={(updated) => setReports((rows) => rows.map((row) => row.id === updated.id ? updated : row))} /></td>
+                  <td><div className="row-actions"><button className="icon-btn" onClick={() => { setEditing(r); setMode('edit'); }}><Pencil size={15} /></button><button className="icon-btn danger" onClick={() => deleteReport(r)}><Trash2 size={15} /></button></div></td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+        </SyncedHorizontalScrollTable>
         {!filtered.length ? <div className="empty">No Safety Performance reports found.</div> : null}
       </section>
       <section className="card wide-card helper-card">
