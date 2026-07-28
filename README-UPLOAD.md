@@ -1,16 +1,16 @@
-# Phase 12A-150 — Safety Top Scrollbar Persistence Fix
+# Phase 12A-151 — Remove “Phase 4” Label
 
 Upload only:
 
 - `src/main.jsx`
 
-## What changed
+## Change
 
-- Keeps the Safety Performance top horizontal scrollbar mounted instead of conditionally hiding it after a later layout measurement.
-- Prevents temporary React/browser measurements from collapsing the scrollbar width.
-- Uses a dedicated intrinsic-width content wrapper so the top and bottom scroll areas measure the same table.
-- Re-measures after report changes, filtering, text updates, resizing, and delayed layout settling.
-- Keeps the top and bottom scroll positions synchronized.
+The Safety Performance helper heading now reads:
+
+`Safety Performance Workflow`
+
+Only the words `Phase 4` were removed. The PDF and Email instructions remain unchanged.
 
 ## Deployment
 
