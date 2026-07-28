@@ -1,4 +1,4 @@
-# Phase 12A-149 — Top and Bottom Safety Report Scrollbars
+# Phase 12A-150 — Safety Top Scrollbar Persistence Fix
 
 Upload only:
 
@@ -6,11 +6,13 @@ Upload only:
 
 ## What changed
 
-- Added a horizontal scrollbar above the Safety Performance report table.
-- The new top scrollbar and the existing bottom scrollbar stay synchronized.
-- The scrollbar width recalculates after refreshes, searches, status filters, report creation, and report deletion.
-- The top scrollbar only appears when the Safety table is wider than the available screen.
-- Works for SaffHire Admins and SaffHire Users who have Safety Performance Reports access.
+- Keeps the Safety Performance top horizontal scrollbar mounted instead of conditionally hiding it after a later layout measurement.
+- Prevents temporary React/browser measurements from collapsing the scrollbar width.
+- Uses a dedicated intrinsic-width content wrapper so the top and bottom scroll areas measure the same table.
+- Re-measures after report changes, filtering, text updates, resizing, and delayed layout settling.
+- Keeps the top and bottom scroll positions synchronized.
 
-SQL migration: No
-Vercel environment variables: No
+## Deployment
+
+- SQL migration: No
+- Vercel environment variables: No
