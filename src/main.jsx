@@ -6,7 +6,7 @@ import SettingsManager from './SettingsPage.jsx';
 import './styles.css';
 
 const LOGO = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663368468239/3wvjutsFdcEUnRywyqJHNV/SaffhireLogoShirtStyle_0449b2e9.webp';
-const STATUSES = ['Consent Needed', 'Consent Given', 'S1 Complete', 'Emp Sent', 'Emp Complete', 'Completed'];
+const STATUSES = ['Consent Needed', 'Sent to Applicant', 'Consent Given', 'S1 Complete', 'Emp Sent', 'Emp Complete', 'Completed'];
 const VEHICLES = [
   ['vehicleStraightTruck', 'Straight Truck'],
   ['vehicleTractorSemitrailer', 'Tractor/Semitrailer'],
@@ -72,7 +72,7 @@ async function api(url, options = {}) {
 
 function defaultReport(company) {
   return {
-    applicantName: '', fileNumber: '', created: new Date().toISOString().slice(0, 10), status: 'Consent Needed', followUpDate: '', notes: '',
+    applicantName: '', applicantEmail: '', fileNumber: '', created: new Date().toISOString().slice(0, 10), status: 'Consent Needed', followUpDate: '', notes: '',
     prevEmployerName: '', prevEmployerEmail: '', prevEmployerStreet: '', prevEmployerPhone: '', prevEmployerFax: '', prevEmployerCityStateZip: '',
     employerName: company?.name || 'Driver Pipeline', employerAttention: '', employerStreet: '1200 N. Union Bower Road', employerCityStateZip: 'Irving, TX 75061', employerPhone: '972-573-2301', employerFax: '', employerEmail: 'lmercado@driverpipeline.com', confFax: '', confEmail: '',
     employedByCompany: '', jobTitle: '', fromDate: '', toDate: '', droveMotorVehicle: '',
@@ -1314,6 +1314,13 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
     const method = form.id ? 'PATCH' : 'POST';
     const data = await api(`/api/safety-reports?companyId=${companyId}`, { method, body: JSON.stringify(form) });
     setReports((rows) => form.id ? rows.map((r) => r.id === form.id ? data.report : r) : [data.report, ...rows]);
+    if (!form.id && data.applicantNotification) {
+      if (data.applicantNotification.sent) {
+        alert(`Report created and emailed to ${data.applicantNotification.email}.`);
+      } else {
+        alert(`Report created, but the applicant was not emailed: ${data.applicantNotification.reason || 'Unknown email error'}`);
+      }
+    }
     setEditing(null);
     setMode('list');
   }
@@ -1413,7 +1420,8 @@ function SafetyForm({ company, companyId, report, onCancel, onSave, onReportUpda
       <Header title="Safety Performance Submission" subtitle={form.id ? `Editing ${form.fileNumber || form.applicantName}` : 'New report'} actions={<button className="secondary-btn" onClick={onCancel}><ArrowLeft size={16} /> Back</button>} />
       <form className="card form-card" onSubmit={submit}>
         <FormSection title="SECTION 1: To be Completed by Prospective Employee">
-          <div className="form-grid three"><Field label="Applicant Name"><input value={form.applicantName} onChange={(e) => set('applicantName', e.target.value)} /></Field><Field label="File Number"><input value={form.fileNumber} onChange={(e) => set('fileNumber', e.target.value)} /></Field><Field label="Status"><select value={form.status} onChange={(e) => set('status', e.target.value)}>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select></Field></div>
+          <div className="form-grid three"><Field label="Applicant Name"><input value={form.applicantName} onChange={(e) => set('applicantName', e.target.value)} /></Field><Field label="Applicant Email"><input type="email" value={form.applicantEmail || ''} onChange={(e) => set('applicantEmail', e.target.value)} placeholder="applicant@example.com" /></Field><Field label="File Number"><input value={form.fileNumber} onChange={(e) => set('fileNumber', e.target.value)} /></Field></div>
+          <div className="form-grid three"><Field label="Status"><select value={form.status} onChange={(e) => set('status', e.target.value)}>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select></Field></div>
           <div className="form-grid two"><Field label="Created"><input type="date" value={form.created || ''} onChange={(e) => set('created', e.target.value)} /></Field><Field label="Follow Up Date"><input type="date" value={form.followUpDate || ''} onChange={(e) => set('followUpDate', e.target.value)} /></Field></div>
           <ApplicantSignatureStatus form={form} saving={saving} onClear={clearApplicantSignature} />
           <Field label="Notes"><textarea value={form.notes || ''} onChange={(e) => set('notes', e.target.value)} rows={4} /></Field>
