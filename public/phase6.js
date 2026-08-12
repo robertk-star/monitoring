@@ -258,7 +258,7 @@
 
   function ensureSafetyStatusOptions() {
     if (!isSafetyPage()) return;
-    const wanted = ['Consent Needed', 'Consent Given', 'S1 Complete', 'Emp Sent', 'Emp Complete', 'Completed'];
+    const wanted = ['Consent Needed', 'Sent to Applicant', 'Consent Given', 'S1 Complete', 'Emp Sent', 'Emp Complete', 'Completed'];
     document.querySelectorAll('select').forEach((select) => {
       const optionTexts = Array.from(select.options || []).map((option) => text(option));
       const looksLikeStatusSelect = optionTexts.some((label) => wanted.includes(label));
@@ -1880,7 +1880,7 @@
   function phase12a85EnsureStatusOptions() {
     const statusSelect = phase12a85FindInput('Status');
     if (!statusSelect || statusSelect.tagName !== 'SELECT') return;
-    const wanted = ['Consent Needed', 'Consent Given', 'S1 Complete', 'Emp Sent', 'Emp Complete', 'Completed'];
+    const wanted = ['Consent Needed', 'Sent to Applicant', 'Consent Given', 'S1 Complete', 'Emp Sent', 'Emp Complete', 'Completed'];
     const existing = Array.from(statusSelect.options || []).map((option) => text(option));
     wanted.forEach((label) => {
       if (!existing.includes(label)) {
