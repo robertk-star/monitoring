@@ -1343,15 +1343,11 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
       <section className="card table-card">
         <SyncedHorizontalScrollTable watchKey={`${sorted.length}:${reports.length}:${status}:${query}:${followUpSort}`}>
           <table>
-            <thead><tr><th>File #</th><th>Applicant</th><th>Created</th><th>Status</th><th>Previous Employer</th><th><button type="button" className="sort-header-button" onClick={toggleFollowUpSort} title="Sort by Follow Up date"><span>Follow Up</span><span className={followUpSort ? 'sort-icon active' : 'sort-icon'}>{followUpSort === 'asc' ? '↑' : followUpSort === 'desc' ? '↓' : '↕'}</span></button></th><th>Notes</th><th>Links</th><th></th></tr></thead>
+            <thead><tr><th>File #</th><th><button type="button" className="sort-header-button" onClick={toggleFollowUpSort} title="Sort by Follow Up date"><span>Follow Up</span><span className={followUpSort ? 'sort-icon active' : 'sort-icon'}>{followUpSort === 'asc' ? '↑' : followUpSort === 'desc' ? '↓' : '↕'}</span></button></th><th>Notes</th><th>Links</th><th>Applicant</th><th>Created</th><th>Status</th><th>Previous Employer</th><th></th></tr></thead>
             <tbody>{sorted.map((r) => {
               return (
                 <tr key={r.id}>
                   <td><b>{r.fileNumber}</b></td>
-                  <td>{r.applicantName}</td>
-                  <td>{r.created}</td>
-                  <td><span className={`status-chip ${r.status?.replaceAll(' ', '-').toLowerCase()}`}>{r.status}</span></td>
-                  <td>{r.prevEmployerName}<small>{r.prevEmployerEmail || 'No email saved'}</small></td>
                   <td>
                     <input
                       type="date"
@@ -1366,6 +1362,10 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
                   </td>
                   <td className="notes-cell">{r.notes}</td>
                   <td className="safety-links-cell" data-safety-links="native"><SafetyLinks report={r} companyId={companyId} company={company} onReportUpdated={(updated) => setReports((rows) => rows.map((row) => row.id === updated.id ? updated : row))} /></td>
+                  <td>{r.applicantName}</td>
+                  <td>{r.created}</td>
+                  <td><span className={`status-chip ${r.status?.replaceAll(' ', '-').toLowerCase()}`}>{r.status}</span></td>
+                  <td>{r.prevEmployerName}<small>{r.prevEmployerEmail || 'No email saved'}</small></td>
                   <td><div className="row-actions"><button className="icon-btn" onClick={() => { setEditing(r); setMode('edit'); }}><Pencil size={15} /></button><button className="icon-btn danger" onClick={() => deleteReport(r)}><Trash2 size={15} /></button></div></td>
                 </tr>
               );
