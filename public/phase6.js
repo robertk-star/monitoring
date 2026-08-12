@@ -2609,7 +2609,7 @@
     removePhaseGeneratedSafetyLinks();
     addPanel();
     removeLegacySafetyButtons();
-    phase12a88RemoveFollowUpColumn();
+    // Follow Up is rendered and sorted natively by React for internal SaffHire users.
     phase12a87EnhanceNotes();
     ensureSafetyStatusOptions();
     makeSafetyTablesSortable();
