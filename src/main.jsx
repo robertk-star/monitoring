@@ -1252,6 +1252,8 @@ function SyncedHorizontalScrollTable({ children, watchKey }) {
 function Safety({ reports, setReports, company, refresh, companyId, dashboardFilter, clearDashboardFilter }) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
+  const [followUpSort, setFollowUpSort] = useState('');
+  const [savingFollowUpId, setSavingFollowUpId] = useState(null);
   const [editing, setEditing] = useState(null);
   const [mode, setMode] = useState('list');
   const activeDashboardFilter = dashboardFilter?.page === 'safety' ? dashboardFilter : null;
@@ -1268,6 +1270,45 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
     if (activeDashboardFilter?.filter === 'completed') dashboardOk = currentStatus === 'Completed';
     return matches && ok && dashboardOk;
   }), [reports, query, status, activeDashboardFilter]);
+
+  const sorted = useMemo(() => {
+    if (!followUpSort) return filtered;
+
+    return [...filtered].sort((a, b) => {
+      const aDate = String(a.followUpDate || '').trim();
+      const bDate = String(b.followUpDate || '').trim();
+      if (!aDate && !bDate) return 0;
+      if (!aDate) return 1;
+      if (!bDate) return -1;
+
+      const comparison = aDate.localeCompare(bDate);
+      return followUpSort === 'asc' ? comparison : -comparison;
+    });
+  }, [filtered, followUpSort]);
+
+  function toggleFollowUpSort() {
+    setFollowUpSort((current) => current === 'asc' ? 'desc' : 'asc');
+  }
+
+  async function updateFollowUpDate(report, followUpDate) {
+    const previous = reports;
+    const updated = { ...report, followUpDate };
+    setReports((rows) => rows.map((row) => row.id === report.id ? updated : row));
+    setSavingFollowUpId(report.id);
+
+    try {
+      const data = await api(`/api/safety-reports?companyId=${companyId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(updated),
+      });
+      setReports((rows) => rows.map((row) => row.id === report.id ? data.report : row));
+    } catch (err) {
+      setReports(previous);
+      alert(err.message || 'Could not save follow-up date.');
+    } finally {
+      setSavingFollowUpId(null);
+    }
+  }
 
   async function saveReport(form) {
     const method = form.id ? 'PATCH' : 'POST';
@@ -1293,18 +1334,29 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
       <DashboardFilterBanner filter={activeDashboardFilter} onClear={clearDashboardFilter} />
       <section className="card toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search file #, applicant, employer, notes..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select></section>
       <section className="card table-card">
-        <SyncedHorizontalScrollTable watchKey={`${filtered.length}:${reports.length}:${status}:${query}`}>
+        <SyncedHorizontalScrollTable watchKey={`${sorted.length}:${reports.length}:${status}:${query}:${followUpSort}`}>
           <table>
-            <thead><tr><th>File #</th><th>Applicant</th><th>Created</th><th>Status</th><th>Follow Up</th><th>Previous Employer</th><th>Notes</th><th>Links</th><th></th></tr></thead>
-            <tbody>{filtered.map((r) => {
+            <thead><tr><th>File #</th><th>Applicant</th><th>Created</th><th>Status</th><th>Previous Employer</th><th><button type="button" className="sort-header-button" onClick={toggleFollowUpSort} title="Sort by Follow Up date"><span>Follow Up</span><span className={followUpSort ? 'sort-icon active' : 'sort-icon'}>{followUpSort === 'asc' ? '↑' : followUpSort === 'desc' ? '↓' : '↕'}</span></button></th><th>Notes</th><th>Links</th><th></th></tr></thead>
+            <tbody>{sorted.map((r) => {
               return (
                 <tr key={r.id}>
                   <td><b>{r.fileNumber}</b></td>
                   <td>{r.applicantName}</td>
                   <td>{r.created}</td>
                   <td><span className={`status-chip ${r.status?.replaceAll(' ', '-').toLowerCase()}`}>{r.status}</span></td>
-                  <td>{r.followUpDate}</td>
                   <td>{r.prevEmployerName}<small>{r.prevEmployerEmail || 'No email saved'}</small></td>
+                  <td>
+                    <input
+                      type="date"
+                      className="small-input"
+                      value={r.followUpDate || ''}
+                      onChange={(event) => updateFollowUpDate(r, event.target.value)}
+                      disabled={savingFollowUpId === r.id}
+                      aria-label={`Follow Up date for ${r.applicantName || r.fileNumber}`}
+                      title={savingFollowUpId === r.id ? 'Saving follow-up date...' : 'Select follow-up date'}
+                    />
+                    {savingFollowUpId === r.id ? <small>Saving...</small> : null}
+                  </td>
                   <td className="notes-cell">{r.notes}</td>
                   <td className="safety-links-cell" data-safety-links="native"><SafetyLinks report={r} companyId={companyId} company={company} onReportUpdated={(updated) => setReports((rows) => rows.map((row) => row.id === updated.id ? updated : row))} /></td>
                   <td><div className="row-actions"><button className="icon-btn" onClick={() => { setEditing(r); setMode('edit'); }}><Pencil size={15} /></button><button className="icon-btn danger" onClick={() => deleteReport(r)}><Trash2 size={15} /></button></div></td>
