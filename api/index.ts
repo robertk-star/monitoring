@@ -4164,9 +4164,20 @@ function safetyExtractLivePayload(search: any) {
   const address = employer.address || {};
   const contactInfo = employer.contactInfo || {};
   const subjectProvided = record.subjectProvidedInfo || {};
+  const applicantEmail = safetyApplicantEmail(
+    record.subject?.email ||
+    record.subject?.emailAddress ||
+    record.subject?.contactInfo?.email ||
+    subjectProvided.email ||
+    subjectProvided.emailAddress ||
+    search.subject?.email ||
+    search.subject?.emailAddress ||
+    ''
+  ) || safetyApplicantEmailFromPayload({ subject: record.subject, subjectProvidedInfo: subjectProvided });
 
   const extracted: any = {
     applicantName: safetyCleanText(record.subject?.fullName || ''),
+    applicantEmail,
     prevEmployerName: safetyCleanText(employer.name || search.displayValue || ''),
     prevEmployerEmail: safetyCleanText(contactInfo.email || ''),
     prevEmployerStreet: safetyCleanText(address.streetOne || address.street1 || ''),
@@ -4191,6 +4202,14 @@ function safetyExtractPendingPayload(search: any, order: any) {
   const previousEmployer = safetyCleanText(search?.displayValue || search?.value || search?.employerName || '');
   return {
     applicantName,
+    applicantEmail: safetyApplicantEmail(
+      search?.subject?.email ||
+      search?.subject?.emailAddress ||
+      order?.applicantEmail ||
+      order?.subject?.email ||
+      order?.subject?.emailAddress ||
+      ''
+    ) || safetyApplicantEmailFromPayload({ subject: search?.subject, order }),
     prevEmployerName: previousEmployer,
     prevEmployerEmail: '',
     prevEmployerStreet: '',
@@ -4605,7 +4624,7 @@ async function safetyCreateOrUpdateReportFromLive(companyId: number, host: strin
   const placeholders = reportCols.map((_, i) => `$${i + 1}`).join(',');
   const inserted = await query(`insert into safety_reports (${reportCols.join(',')}) values (${placeholders}) returning id`, reportValues(base));
   let report = await safetyUpdateExistingReportFromLive(inserted.rows[0].id, companyId, host, clientGuid, orderGuid, safetySearch, extracted);
-  const applicantEmail = await safetyApplicantEmailForReport(companyId, fileNumber, '', order);
+  const applicantEmail = await safetyApplicantEmailForReport(companyId, fileNumber, extracted.applicantEmail, { extracted, safetySearch, order });
   const applicantNotification = await sendNewSafetyReportToApplicant({
     report,
     applicantEmail,
