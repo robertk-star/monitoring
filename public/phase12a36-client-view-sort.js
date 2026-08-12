@@ -1527,6 +1527,7 @@
   let state = { onRows: [], offRows: [] };
 
   const HEADERS = ['ReferenceId', 'FirstName', 'MiddleName', 'LastName', 'DOB', 'DL Number', 'DL State'];
+  const DISPLAY_HEADERS = [...HEADERS, 'Changed At'];
 
   function text(el) {
     return (el && el.textContent ? el.textContent : '').trim();
@@ -1601,6 +1602,19 @@
       row['DL Number'],
       row['DL State']
     ];
+  }
+
+  function formatChangedAt(value) {
+    if (!value) return '';
+    const changedAt = new Date(value);
+    if (Number.isNaN(changedAt.getTime())) return String(value);
+    return changedAt.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
   }
 
   function downloadCsv(rows, filename) {
@@ -1693,7 +1707,7 @@
           <table class="phase12a60-table">
             <thead>
               <tr>
-                ${HEADERS.map((h) => `<th>${esc(h)}</th>`).join('')}
+                ${DISPLAY_HEADERS.map((h) => `<th>${esc(h)}</th>`).join('')}
               </tr>
             </thead>
             <tbody>
@@ -1705,8 +1719,9 @@
                     }
                     return `<td>${esc(value || '')}</td>`;
                   }).join('')}
+                  <td>${esc(formatChangedAt(row.createdAt))}</td>
                 </tr>
-              `).join('') : `<tr><td colspan="${HEADERS.length}" class="phase12a60-empty">No rows waiting.</td></tr>`}
+              `).join('') : `<tr><td colspan="${DISPLAY_HEADERS.length}" class="phase12a60-empty">No rows waiting.</td></tr>`}
             </tbody>
           </table>
         </div>
