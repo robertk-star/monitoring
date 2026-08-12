@@ -7,7 +7,7 @@ import path from 'path';
 const { Pool } = pg;
 let pool: any;
 const SESSION_COOKIE = 'saffhire_session';
-const SAFETY_STATUSES = new Set(['Consent Needed', 'Consent Given', 'S1 Complete', 'Emp Sent', 'Emp Complete', 'Completed']);
+const SAFETY_STATUSES = new Set(['Consent Needed', 'Sent to Applicant', 'Consent Given', 'S1 Complete', 'Emp Sent', 'Emp Complete', 'Completed']);
 const USER_ROLES = new Set(['admin', 'user', 'viewer', 'client_admin', 'client_user']);
 const DEFAULT_CLIENT_ACCESS = {
   dashboard: true,
@@ -97,6 +97,7 @@ async function ensureSafetyStatusEnumValues() {
     if (typeCheck.rows[0]?.exists) {
       await query("alter type safety_report_status add value if not exists 'Consent Needed'");
       await query("alter type safety_report_status add value if not exists 'Consent Given'");
+      await query("alter type safety_report_status add value if not exists 'Sent to Applicant'");
     }
   } catch (error: any) {
     throw new Error(`Safety report status setup failed. Run the Phase 12A-86 SQL migration in Supabase, then try again. Details: ${errorMessage(error)}`);
@@ -385,6 +386,144 @@ function safetyCsvToReport(row: any) {
   return out;
 }
 
+function safetyApplicantEmail(value: any) {
+  const email = String(value || '').trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
+function safetyApplicantEmailFromPayload(payload: any) {
+  const directCandidates = [
+    payload?.applicantEmail,
+    payload?.applicant?.email,
+    payload?.subject?.email,
+    payload?.subject?.emailAddress,
+    payload?.candidate?.email,
+    payload?.person?.email,
+    payload?.raw?.applicantEmail,
+    payload?.raw?.applicant?.email,
+    payload?.raw?.subject?.email,
+    payload?.raw?.subject?.emailAddress,
+    payload?.raw?.candidate?.email,
+  ];
+  for (const candidate of directCandidates) {
+    const email = safetyApplicantEmail(candidate);
+    if (email) return email;
+  }
+
+  const seen = new Set<any>();
+  function walk(value: any, path: string[], depth: number): string {
+    if (!value || depth > 7 || typeof value !== 'object' || seen.has(value)) return '';
+    seen.add(value);
+    for (const [key, child] of Object.entries(value)) {
+      const nextPath = [...path, String(key).toLowerCase()];
+      const keyLower = String(key).toLowerCase();
+      const applicantContext = nextPath.some((part) => /applicant|subject|candidate|consumer|person/.test(part));
+      if (applicantContext && /email/.test(keyLower)) {
+        const email = safetyApplicantEmail(child);
+        if (email) return email;
+      }
+      const nested = walk(child, nextPath, depth + 1);
+      if (nested) return nested;
+    }
+    return '';
+  }
+  return walk(payload, [], 0);
+}
+
+async function safetyApplicantEmailForReport(companyId: number, fileNumber: string, explicitEmail: any, sourcePayload?: any) {
+  const explicit = safetyApplicantEmail(explicitEmail);
+  if (explicit) return explicit;
+
+  const fromSource = safetyApplicantEmailFromPayload(sourcePayload);
+  if (fromSource) return fromSource;
+
+  if (!fileNumber) return '';
+  try {
+    const cached = await query(
+      `select raw_order
+       from tazworks_order_cache
+       where company_id=$1 and trim(file_number::text)=trim($2)
+       order by last_seen_at desc
+       limit 1`,
+      [companyId, fileNumber]
+    );
+    return safetyApplicantEmailFromPayload(cached.rows[0]?.raw_order);
+  } catch {
+    return '';
+  }
+}
+
+function safetyApplicationOrigin(req?: any) {
+  const configured = String(
+    process.env.SAFETY_APP_URL ||
+    process.env.PUBLIC_APP_URL ||
+    process.env.APP_URL ||
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+    process.env.VERCEL_URL ||
+    ''
+  ).trim();
+  if (configured) return /^https?:\/\//i.test(configured) ? configured.replace(/\/$/, '') : `https://${configured.replace(/\/$/, '')}`;
+  const origin = String(req?.headers?.origin || '').trim();
+  if (/^https?:\/\//i.test(origin)) return origin.replace(/\/$/, '');
+  const host = String(req?.headers?.host || '').trim();
+  return host ? `https://${host}` : '';
+}
+
+async function safetyApplicantFormUrl(report: any, origin: string) {
+  if (!origin) throw new Error('The production app URL is not configured.');
+  const token = await new SignJWT({
+    type: 'safety_response',
+    responseRole: 'applicant',
+    reportId: report.id,
+    companyId: report.companyId,
+    fileNumber: report.fileNumber
+  })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime('14d')
+    .sign(secret());
+  return `${origin}/employer-response.html?token=${encodeURIComponent(token)}&role=applicant`;
+}
+
+async function sendNewSafetyReportToApplicant(params: { report: any; applicantEmail: string; origin: string; }) {
+  const email = safetyApplicantEmail(params.applicantEmail);
+  if (!email) return { attempted: false, sent: false, reason: 'A valid applicant email was not found.' };
+
+  try {
+    const formUrl = await safetyApplicantFormUrl(params.report, params.origin);
+    const applicantName = String(params.report?.applicantName || '').trim();
+    const subject = 'Safety Performance Report — Employer Information and Signature Needed';
+    const body = [
+      applicantName ? `Hello ${applicantName},` : 'Hello,',
+      '',
+      'Please use the secure link below to provide your previous-employer information and electronic signature for your Safety Performance report.',
+      '',
+      formUrl,
+      '',
+      'This secure link expires in 14 days.',
+      '',
+      'SaffHire Background Screening'
+    ].join('\n');
+
+    const provider = await sendMonitoringNotificationEmail(email, subject, body);
+    const updated = await query(
+      `update safety_reports
+       set status='Sent to Applicant', "lastEmailed"=now(), "updatedAt"=now()
+       where id=$1 and "companyId"=$2
+       returning *`,
+      [params.report.id, params.report.companyId]
+    );
+    return { attempted: true, sent: true, email, provider, report: updated.rows[0], formExpiresInDays: 14 };
+  } catch (error: any) {
+    console.error('Automatic applicant Safety Performance email failed', {
+      reportId: params.report?.id,
+      fileNumber: params.report?.fileNumber,
+      message: errorMessage(error)
+    });
+    return { attempted: true, sent: false, email, reason: errorMessage(error) };
+  }
+}
+
 async function safetyReports(req: any, res: any, user: any) {
   const url = new URL(req.url || '/', 'https://local.test'); const companyId = requestedCompanyId(req, user);
   if (isClientScopedRole(user) && !canViewClientSafety(user)) {
@@ -400,7 +539,27 @@ async function safetyReports(req: any, res: any, user: any) {
     return json(res, 200, { status: 'ok', reports: r.rows, source, requestedCompanyId: companyId });
   }
   if (isClientScopedRole(user)) return json(res, 403, { status: 'error', message: 'Client accounts can view Safety Reports, but cannot create, edit, or delete them here' });
-  if (req.method === 'POST') { await ensureSafetyStatusEnumValues(); const v = cleanReport(await readBody(req), companyId); v.status = 'Consent Needed'; if (!v.fileNumber && !v.applicantName) return json(res, 400, { status: 'error', message: 'File number or applicant name is required' }); const writable = await safetyWritableColumns(); const placeholders = writable.cols.map((_, i) => `$${i + 1}`).join(','); const r = await query(`insert into safety_reports (${writable.cols.join(',')}) values (${placeholders}) returning *`, reportValuesForFields(v, writable.fields)); return json(res, 200, { status: 'ok', report: r.rows[0] }); }
+  if (req.method === 'POST') {
+    await ensureSafetyStatusEnumValues();
+    const body = await readBody(req);
+    const v = cleanReport(body, companyId);
+    v.status = 'Consent Needed';
+    if (!v.fileNumber && !v.applicantName) return json(res, 400, { status: 'error', message: 'File number or applicant name is required' });
+    const writable = await safetyWritableColumns();
+    const placeholders = writable.cols.map((_, i) => `${i + 1}`).join(',');
+    const inserted = await query(`insert into safety_reports (${writable.cols.join(',')}) values (${placeholders}) returning *`, reportValuesForFields(v, writable.fields));
+    const applicantEmail = await safetyApplicantEmailForReport(companyId, v.fileNumber, body.applicantEmail, body);
+    const applicantNotification = await sendNewSafetyReportToApplicant({
+      report: inserted.rows[0],
+      applicantEmail,
+      origin: safetyApplicationOrigin(req)
+    });
+    return json(res, 200, {
+      status: 'ok',
+      report: applicantNotification.report || inserted.rows[0],
+      applicantNotification
+    });
+  }
   if (req.method === 'PATCH') { await ensureSafetyStatusEnumValues(); const body = await readBody(req); const id = Number(body.id); if (!id) return json(res, 400, { status: 'error', message: 'Report id is required' }); const v = cleanReport(body, companyId); const writable = await safetyWritableColumns(); const assignments = writable.cols.slice(1).map((col, i) => `${col}=$${i + 1}`).join(','); const params = reportValuesForFields(v, writable.fields).slice(1); params.push(id, companyId); const r = await query(`update safety_reports set ${assignments}, "updatedAt"=now() where id=$${params.length - 1} and "companyId"=$${params.length} returning *`, params); return json(res, 200, { status: 'ok', report: r.rows[0] }); }
   if (req.method === 'DELETE') { const id = Number(url.searchParams.get('id')); await query('delete from safety_reports where id=$1 and "companyId"=$2', [id, companyId]); return json(res, 200, { status: 'ok', success: true }); }
   return json(res, 405, { status: 'error', message: 'Method not allowed' });
@@ -4393,7 +4552,7 @@ async function safetyUpdateExistingReportFromLive(reportId: number, companyId: n
   return update.rows[0];
 }
 
-async function safetyCreateOrUpdateReportFromLive(companyId: number, host: string, clientGuid: string, orderGuid: string, order: any, safetySearch: any, extracted: any) {
+async function safetyCreateOrUpdateReportFromLive(companyId: number, host: string, clientGuid: string, orderGuid: string, order: any, safetySearch: any, extracted: any, origin = '') {
   const fileNumber = safetyCleanText(order.fileNumber || '');
   if (!fileNumber) throw new Error('Order did not include a file number.');
 
@@ -4445,8 +4604,15 @@ async function safetyCreateOrUpdateReportFromLive(companyId: number, host: strin
 
   const placeholders = reportCols.map((_, i) => `$${i + 1}`).join(',');
   const inserted = await query(`insert into safety_reports (${reportCols.join(',')}) values (${placeholders}) returning id`, reportValues(base));
-  const report = await safetyUpdateExistingReportFromLive(inserted.rows[0].id, companyId, host, clientGuid, orderGuid, safetySearch, extracted);
-  return { action: 'created', report };
+  let report = await safetyUpdateExistingReportFromLive(inserted.rows[0].id, companyId, host, clientGuid, orderGuid, safetySearch, extracted);
+  const applicantEmail = await safetyApplicantEmailForReport(companyId, fileNumber, '', order);
+  const applicantNotification = await sendNewSafetyReportToApplicant({
+    report,
+    applicantEmail,
+    origin: origin || safetyApplicationOrigin()
+  });
+  if (applicantNotification.report) report = applicantNotification.report;
+  return { action: 'created', report, applicantNotification };
 }
 
 async function safetyCacheTazOrder(companyId: number, order: any) {
@@ -4596,7 +4762,7 @@ async function safetyReportsLiveDiscover(req: any, res: any, user: any) {
           extracted = safetyExtractPendingPayload(safetySearch, order);
         }
 
-        const result = await safetyCreateOrUpdateReportFromLive(companyId, host, clientGuid, orderGuid, order, safetySearch, extracted);
+        const result = await safetyCreateOrUpdateReportFromLive(companyId, host, clientGuid, orderGuid, order, safetySearch, extracted, safetyApplicationOrigin(req));
         if (result.action === 'created') summary.created++;
         else summary.updated++;
 
@@ -4608,7 +4774,9 @@ async function safetyReportsLiveDiscover(req: any, res: any, user: any) {
             previousEmployer: result.report?.prevEmployerName || extracted.prevEmployerName || '',
             orderGuid,
             orderSearchGuid: extracted.orderSearchGuid || '',
-            sourcePath: pulled.sourcePath || ''
+            sourcePath: pulled.sourcePath || '',
+            applicantEmailSent: Boolean(result.applicantNotification?.sent),
+            applicantEmailReason: result.applicantNotification?.sent ? '' : (result.applicantNotification?.reason || '')
           });
         }
       } catch (error: any) {
