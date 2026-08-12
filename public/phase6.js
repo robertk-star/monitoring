@@ -175,16 +175,17 @@
   }
 
   function applyDefaultSafetySort(table) {
-    if (!table || table.dataset.phase6ManualSort === '1') return;
+    if (!table || table.dataset.phase6ManualSort === '1' || table.dataset.phase6DefaultSortApplied === '1') return;
     const idx = indexes(table);
     if (idx.file < 0) return;
 
     // Default Safety Performance view: newest report/order at the top.
-    // File numbers track the newest orders, so use File # descending until the
-    // user manually clicks a sortable column header.
+    // Run this once only. Re-appending rows on every refresh closes native
+    // controls such as the Follow Up date picker.
     table.dataset.phase6SortKey = 'file';
     table.dataset.phase6SortDirection = 'desc';
     applySafetySort(table, 'file', 'desc');
+    table.dataset.phase6DefaultSortApplied = '1';
   }
 
   function updateSafetySortHeaders(table) {
