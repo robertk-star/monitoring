@@ -707,7 +707,7 @@ async function users(req: any, res: any, user: any) {
       if (newPassword.length < 8) return json(res, 400, { status: 'error', message: 'New password must be at least 8 characters' });
       const passwordHash = await bcrypt.hash(newPassword, 12);
       const reset = await query(
-        'update local_users set "passwordHash"=$1, "mustChangePassword"=false, "updatedAt"=now() where id=$2 returning id, username, "displayName", role, "companyId", "isActive", "mustChangePassword", "lastSignedIn", "clientAccess", "internalAccess"',
+        'update local_users set "passwordHash"=$1, "mustChangePassword"=true, "updatedAt"=now() where id=$2 returning id, username, "displayName", role, "companyId", "isActive", "mustChangePassword", "lastSignedIn", "clientAccess", "internalAccess"',
         [passwordHash, id]
       );
       if (!reset.rows[0]) return json(res, 404, { status: 'error', message: 'User not found' });
@@ -1005,7 +1005,8 @@ async function changePassword(req: any, res: any, user: any) {
   const body = await readBody(req); const currentPassword = String(body.currentPassword || ''); const newPassword = String(body.newPassword || '');
   if (newPassword.length < 8) return json(res, 400, { status: 'error', message: 'New password must be at least 8 characters' });
   const result = await query('select id, "passwordHash" from local_users where id=$1 limit 1', [user.id]); const row = result.rows[0];
-  if (!row || !(await bcrypt.compare(currentPassword, row.passwordHash))) return json(res, 400, { status: 'error', message: 'Current password is incorrect' });
+  if (!row || !(await bcrypt.compare(currentPassword, row.passwordHash))) return json(res, 400, { status: 'error', message: 'Temporary/current password is incorrect' });
+  if (await bcrypt.compare(newPassword, row.passwordHash)) return json(res, 400, { status: 'error', message: 'Choose a new password different from the temporary password' });
   await query('update local_users set "passwordHash"=$1, "mustChangePassword"=false, "updatedAt"=now() where id=$2', [await bcrypt.hash(newPassword, 12), user.id]);
   return json(res, 200, { status: 'ok', success: true });
 }
@@ -5633,6 +5634,9 @@ export default async function handler(req: any, res: any) {
     if (authResult !== false) return;
     const user = await requireUser(req, res);
     if (!user) return;
+    if (user.mustChangePassword && route !== 'change-password') {
+      return json(res, 403, { status: 'error', code: 'PASSWORD_CHANGE_REQUIRED', message: 'You must change your temporary password before continuing' });
+    }
 
     // SaffHire Users receive full administrative rights only inside assigned report areas.
     if (String(user.role || '') === 'user') {
