@@ -700,6 +700,20 @@ async function users(req: any, res: any, user: any) {
   }
   if (req.method === 'PATCH') {
     const id = Number(body.id);
+    if (!id) return json(res, 400, { status: 'error', message: 'User id is required' });
+
+    if (body.action === 'reset-password') {
+      const newPassword = String(body.password || '');
+      if (newPassword.length < 8) return json(res, 400, { status: 'error', message: 'New password must be at least 8 characters' });
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      const reset = await query(
+        'update local_users set "passwordHash"=$1, "mustChangePassword"=false, "updatedAt"=now() where id=$2 returning id, username, "displayName", role, "companyId", "isActive", "mustChangePassword", "lastSignedIn", "clientAccess", "internalAccess"',
+        [passwordHash, id]
+      );
+      if (!reset.rows[0]) return json(res, 404, { status: 'error', message: 'User not found' });
+      return json(res, 200, { status: 'ok', user: publicUser(reset.rows[0]), passwordReset: true });
+    }
+
     const role = USER_ROLES.has(body.role) ? body.role : 'user';
     const clientAccess = normalizeClientAccess(body.clientAccess || {});
     const internalAccessValue = normalizeInternalAccess(body.internalAccess || {});
