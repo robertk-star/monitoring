@@ -657,6 +657,11 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
       <Header title="Monitoring" subtitle={`${company?.name || 'Driver Pipeline'} · ${sorted.length} records`} action={refresh} />
       <MonitoringAlerts applicants={applicants} activeFilter={alertFilter} onFilterChange={setAlertFilterPersisted} />
       <DashboardFilterBanner filter={activeDashboardFilter} onClear={clearDashboardFilter} />
+      <div className="grid cards dashboard-card-grid safety-report-status-grid" aria-label="Safety report status filters">
+        <Metric title="Completed" value={safetyStatusCounts.completed} icon={ClipboardCheck} onClick={() => filterByStatus('Completed')} />
+        <Metric title="Sent to Applicant" value={safetyStatusCounts.sentToApplicant} icon={Mail} onClick={() => filterByStatus('Sent to Applicant')} />
+        <Metric title="Consent Given" value={safetyStatusCounts.consentGiven} icon={ShieldCheck} onClick={() => filterByStatus('Consent Given')} />
+      </div>
       <section className="card toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search file number, name, notes..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>On</option><option>Off</option></select></section>
       <section className="card table-card"><table><thead><tr><SortHeader label="File #" sortKey="fileNumber" /><SortHeader label="Name" sortKey="name" /><SortHeader label="Order Date" sortKey="orderDate" /><SortHeader label="Monitoring" sortKey="monitorStatus" /><SortHeader label="MVR Status" sortKey="mvrStatus" /><SortHeader label="Med Expire" sortKey="medExpire" /><SortHeader label="Notes" sortKey="notes" /><th></th></tr></thead><tbody>{sorted.map((a) => <ApplicantRow key={a.id} applicant={a} onSave={updateApplicant} />)}</tbody></table>{!sorted.length ? <div className="empty">No applicants found. Import your CSV data into Supabase.</div> : null}</section>
     </>
@@ -1257,6 +1262,16 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
   const [editing, setEditing] = useState(null);
   const [mode, setMode] = useState('list');
   const activeDashboardFilter = dashboardFilter?.page === 'safety' ? dashboardFilter : null;
+  const safetyStatusCounts = useMemo(() => ({
+    completed: reports.filter((r) => statusText(r.status) === 'Completed').length,
+    sentToApplicant: reports.filter((r) => statusText(r.status) === 'Sent to Applicant').length,
+    consentGiven: reports.filter((r) => statusText(r.status) === 'Consent Given').length,
+  }), [reports]);
+
+  function filterByStatus(nextStatus) {
+    clearDashboardFilter?.();
+    setStatus(nextStatus);
+  }
 
   const filtered = useMemo(() => reports.filter((r) => {
     const term = query.toLowerCase();
