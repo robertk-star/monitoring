@@ -558,6 +558,50 @@ async function sendNewSafetyReportInternalNotification(params: { report: any; or
   }
 }
 
+async function sendApplicantSignedInternalNotification(params: { report: any; signatureName: string; signedAt: string; origin: string; }) {
+  const email = String(
+    process.env.SAFETY_APPLICANT_SIGNED_NOTIFICATION_EMAIL ||
+    process.env.SAFETY_NEW_REPORT_NOTIFICATION_EMAIL ||
+    'brittneyh@saffhire.com'
+  ).trim().toLowerCase();
+  const report = params.report || {};
+  const fileNumber = String(report.fileNumber || '').trim();
+  const applicantName = String(report.applicantName || '').trim();
+  const employerName = String(report.prevEmployerName || '').trim();
+  const subjectDetail = fileNumber ? `File #${fileNumber}` : (applicantName || 'Safety Report');
+  const subject = `Applicant Signed Safety Performance Form — ${subjectDetail}`;
+  const signedAt = new Date(params.signedAt);
+  const signedAtCentral = Number.isNaN(signedAt.getTime())
+    ? params.signedAt
+    : signedAt.toLocaleString('en-US', { timeZone: 'America/Chicago', dateStyle: 'medium', timeStyle: 'short' });
+  const body = [
+    'An applicant has signed the Safety Performance form.',
+    '',
+    `File Number: ${fileNumber || 'Not provided'}`,
+    `Applicant: ${applicantName || 'Not provided'}`,
+    `Signed By: ${params.signatureName || applicantName || 'Not provided'}`,
+    `Signed At: ${signedAtCentral || 'Not provided'} Central`,
+    `Previous Employer: ${employerName || 'Not provided'}`,
+    'Status: Consent Given',
+    params.origin ? `Open Safety Performance Reports: ${params.origin}` : '',
+    '',
+    'SaffHire Monitoring'
+  ].filter(Boolean).join('\n');
+
+  try {
+    const provider = await sendMonitoringNotificationEmail(email, subject, body);
+    return { attempted: true, sent: true, email, provider };
+  } catch (error: any) {
+    console.error('Automatic applicant signature notification failed', {
+      reportId: report?.id,
+      fileNumber,
+      email,
+      message: errorMessage(error)
+    });
+    return { attempted: true, sent: false, email, reason: errorMessage(error) };
+  }
+}
+
 async function safetyReports(req: any, res: any, user: any) {
   const url = new URL(req.url || '/', 'https://local.test'); const companyId = requestedCompanyId(req, user);
   if (isClientScopedRole(user) && !canViewClientSafety(user)) {
@@ -5156,6 +5200,7 @@ async function safetyResponsePublic(req: any, res: any) {
         [Number(payload.reportId), Number(payload.companyId)]
       );
       if (!existing.rows[0]) return json(res, 404, { status: 'error', message: 'Safety report not found' });
+      const wasAlreadySigned = /\[Applicant Electronic Signature\]/i.test(String(existing.rows[0].notes || ''));
 
       const signedAt = new Date().toISOString();
       const ip = String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || '').split(',')[0].trim();
@@ -5186,6 +5231,15 @@ async function safetyResponsePublic(req: any, res: any) {
       const row = result.rows[0];
 
       if (!row) return json(res, 404, { status: 'error', message: 'Safety report not found' });
+
+      if (!wasAlreadySigned) {
+        await sendApplicantSignedInternalNotification({
+          report: row,
+          signatureName,
+          signedAt,
+          origin: safetyApplicationOrigin(req)
+        });
+      }
 
       return json(res, 200, {
         status: 'ok',
