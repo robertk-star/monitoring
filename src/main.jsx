@@ -657,11 +657,6 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
       <Header title="Monitoring" subtitle={`${company?.name || 'Driver Pipeline'} · ${sorted.length} records`} action={refresh} />
       <MonitoringAlerts applicants={applicants} activeFilter={alertFilter} onFilterChange={setAlertFilterPersisted} />
       <DashboardFilterBanner filter={activeDashboardFilter} onClear={clearDashboardFilter} />
-      <div className="grid cards dashboard-card-grid safety-report-status-grid" aria-label="Safety report status filters">
-        <Metric title="Completed" value={safetyStatusCounts.completed} icon={ClipboardCheck} onClick={() => filterByStatus('Completed')} />
-        <Metric title="Sent to Applicant" value={safetyStatusCounts.sentToApplicant} icon={Mail} onClick={() => filterByStatus('Sent to Applicant')} />
-        <Metric title="Consent Given" value={safetyStatusCounts.consentGiven} icon={ShieldCheck} onClick={() => filterByStatus('Consent Given')} />
-      </div>
       <section className="card toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search file number, name, notes..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>On</option><option>Off</option></select></section>
       <section className="card table-card"><table><thead><tr><SortHeader label="File #" sortKey="fileNumber" /><SortHeader label="Name" sortKey="name" /><SortHeader label="Order Date" sortKey="orderDate" /><SortHeader label="Monitoring" sortKey="monitorStatus" /><SortHeader label="MVR Status" sortKey="mvrStatus" /><SortHeader label="Med Expire" sortKey="medExpire" /><SortHeader label="Notes" sortKey="notes" /><th></th></tr></thead><tbody>{sorted.map((a) => <ApplicantRow key={a.id} applicant={a} onSave={updateApplicant} />)}</tbody></table>{!sorted.length ? <div className="empty">No applicants found. Import your CSV data into Supabase.</div> : null}</section>
     </>
@@ -1257,20 +1252,25 @@ function SyncedHorizontalScrollTable({ children, watchKey }) {
 function Safety({ reports, setReports, company, refresh, companyId, dashboardFilter, clearDashboardFilter }) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
+  const [safetyCardFilter, setSafetyCardFilter] = useState('');
   const [followUpSort, setFollowUpSort] = useState('');
   const [savingFollowUpId, setSavingFollowUpId] = useState(null);
   const [editing, setEditing] = useState(null);
   const [mode, setMode] = useState('list');
   const activeDashboardFilter = dashboardFilter?.page === 'safety' ? dashboardFilter : null;
   const safetyStatusCounts = useMemo(() => ({
+    total: reports.length,
     completed: reports.filter((r) => statusText(r.status) === 'Completed').length,
     sentToApplicant: reports.filter((r) => statusText(r.status) === 'Sent to Applicant').length,
-    consentGiven: reports.filter((r) => statusText(r.status) === 'Consent Given').length,
+    consentNeeded: reports.filter((r) => ['Consent Needed', 'S1 Complete'].includes(statusText(r.status))).length,
+    consentGiven: reports.filter((r) => ['Consent Given', 'Emp Sent'].includes(statusText(r.status))).length,
+    ordersOpen: reports.filter((r) => statusText(r.status) !== 'Completed').length,
   }), [reports]);
 
-  function filterByStatus(nextStatus) {
+  function filterByStatus(nextStatus, cardFilter = '') {
     clearDashboardFilter?.();
     setStatus(nextStatus);
+    setSafetyCardFilter(cardFilter);
   }
 
   const filtered = useMemo(() => reports.filter((r) => {
@@ -1278,13 +1278,17 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
     const currentStatus = statusText(r.status);
     const matches = !term || `${r.fileNumber} ${r.applicantName} ${r.prevEmployerName} ${r.notes}`.toLowerCase().includes(term);
     const ok = status === 'All' || currentStatus === status;
+    let cardOk = true;
+    if (safetyCardFilter === 'consent-needed') cardOk = ['Consent Needed', 'S1 Complete'].includes(currentStatus);
+    if (safetyCardFilter === 'consent-given') cardOk = ['Consent Given', 'Emp Sent'].includes(currentStatus);
+    if (safetyCardFilter === 'orders-open') cardOk = currentStatus !== 'Completed';
     let dashboardOk = true;
     if (activeDashboardFilter?.filter === 'consent-needed') dashboardOk = ['Consent Needed', 'S1 Complete'].includes(currentStatus);
     if (activeDashboardFilter?.filter === 'consent-given') dashboardOk = ['Consent Given', 'Emp Sent'].includes(currentStatus);
     if (activeDashboardFilter?.filter === 'orders-open') dashboardOk = currentStatus !== 'Completed';
     if (activeDashboardFilter?.filter === 'completed') dashboardOk = currentStatus === 'Completed';
-    return matches && ok && dashboardOk;
-  }), [reports, query, status, activeDashboardFilter]);
+    return matches && ok && cardOk && dashboardOk;
+  }), [reports, query, status, safetyCardFilter, activeDashboardFilter]);
 
   const sorted = useMemo(() => {
     if (!followUpSort) return filtered;
@@ -1354,7 +1358,15 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
     <>
       <Header title="Safety Performance Reports" subtitle={`${company?.name || 'Driver Pipeline'} · ${filtered.length} reports`} action={refresh} actions={<button className="primary-inline" onClick={() => { setEditing(defaultReport(company)); setMode('edit'); }}><Plus size={16} /> New Report</button>} />
       <DashboardFilterBanner filter={activeDashboardFilter} onClear={clearDashboardFilter} />
-      <section className="card toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search file #, applicant, employer, notes..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select></section>
+      <div className="grid cards dashboard-card-grid safety-report-status-grid" aria-label="Safety report status filters">
+        <Metric title="Total Reports" value={safetyStatusCounts.total} icon={Truck} onClick={() => filterByStatus('All')} />
+        <Metric title="Consent Needed" value={safetyStatusCounts.consentNeeded} icon={ShieldCheck} onClick={() => filterByStatus('All', 'consent-needed')} />
+        <Metric title="Consent Given" value={safetyStatusCounts.consentGiven} icon={ClipboardCheck} onClick={() => filterByStatus('All', 'consent-given')} />
+        <Metric title="Orders Open" value={safetyStatusCounts.ordersOpen} icon={Activity} subtitle="not completed" onClick={() => filterByStatus('All', 'orders-open')} />
+        <Metric title="Completed" value={safetyStatusCounts.completed} icon={Database} onClick={() => filterByStatus('Completed')} />
+        <Metric title="Sent to Applicant" value={safetyStatusCounts.sentToApplicant} icon={Mail} onClick={() => filterByStatus('Sent to Applicant')} />
+      </div>
+      <section className="card toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search file #, applicant, employer, notes..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={status} onChange={(e) => { setStatus(e.target.value); setSafetyCardFilter(''); }}><option>All</option>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select></section>
       <section className="card table-card">
         <SyncedHorizontalScrollTable watchKey={`${sorted.length}:${reports.length}:${status}:${query}:${followUpSort}`}>
           <table>
