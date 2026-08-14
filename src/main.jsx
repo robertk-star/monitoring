@@ -369,6 +369,55 @@ function Login({ onAuth }) {
   );
 }
 
+function RequiredPasswordChange({ user, onChanged, onLogout }) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    if (newPassword.length < 8) return setError('Your new password must be at least 8 characters.');
+    if (newPassword !== confirmation) return setError('The new passwords do not match.');
+    if (newPassword === currentPassword) return setError('Choose a password different from the temporary password.');
+    setSaving(true);
+    try {
+      await api('/api/index?path=change-password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      onChanged({ ...user, mustChangePassword: false });
+    } catch (err) {
+      setError(err.message || 'Could not change password.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="login-shell">
+      <form className="login-card" onSubmit={submit}>
+        <img src={LOGO} alt="SaffHire" className="login-logo" />
+        <div className="login-title-row">
+          <ShieldCheck size={30} />
+          <div><h1>Create Your Password</h1><p>Your administrator issued a temporary password. You must replace it before continuing.</p></div>
+        </div>
+        {error ? <div className="error-box">{error}</div> : null}
+        <label>Temporary Password</label>
+        <input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required autoFocus autoComplete="current-password" />
+        <label>New Password</label>
+        <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required minLength={8} autoComplete="new-password" />
+        <label>Confirm New Password</label>
+        <input type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required minLength={8} autoComplete="new-password" />
+        <button className="primary-btn" disabled={saving}>{saving ? 'Saving...' : 'Set My Password'}</button>
+        <button type="button" className="secondary-btn" onClick={onLogout}>Sign Out</button>
+      </form>
+    </div>
+  );
+}
+
 function Layout({ user, children, page, setPage, onLogout }) {
   const nav = [
     ['dashboard', 'Dashboard', Activity, true],
@@ -1674,6 +1723,7 @@ function App() {
 
   if (checking) return <div className="center-screen"><div className="spinner" /></div>;
   if (!user) return <Login onAuth={setUser} />;
+  if (user.mustChangePassword && !isClientPortalAccount(user)) return <RequiredPasswordChange user={user} onChanged={setUser} onLogout={logout} />;
   if (isClientPortalAccount(user)) return <div className="center-screen"><div className="login-card"><h1>Opening Client Portal...</h1><p>Please wait.</p></div></div>;
 
   return <Layout user={user} page={page} setPage={(nextPage) => { if (!allowedPages.includes(nextPage)) return; setPage(nextPage); if (nextPage === 'dashboard') clearDashboardFilter(); }} onLogout={logout}>{companies.length > 1 ? <div className="company-switcher"><span>Active company</span><select value={companyId} onChange={(e) => setCompanyId(Number(e.target.value))}>{companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div> : null}{page === 'dashboard' && <Dashboard company={company} applicants={applicants} reports={reports} refresh={loadData} openCard={openDashboardCard} showMonitoring={canMonitoring} showSafety={canSafety} />}{page === 'monitoring' && canMonitoring && <Monitoring company={company} applicants={applicants} setApplicants={setApplicants} refresh={loadData} dashboardFilter={dashboardFilter} clearDashboardFilter={clearDashboardFilter} />}{page === 'safety' && canSafety && <Safety company={company} reports={reports} setReports={setReports} refresh={loadData} companyId={companyId} dashboardFilter={dashboardFilter} clearDashboardFilter={clearDashboardFilter} />}{page === 'email-settings' && canManageEmailSettings(user) && <EmailSettingsPage company={company} companyId={companyId} />}{page === 'settings' && user?.role === 'admin' && <SettingsManager user={user} company={company} companies={companies} setCompanies={setCompanies} companyId={companyId} refresh={loadData} setApplicants={setApplicants} />}</Layout>;
