@@ -524,6 +524,40 @@ async function sendNewSafetyReportToApplicant(params: { report: any; applicantEm
   }
 }
 
+async function sendNewSafetyReportInternalNotification(params: { report: any; origin: string; }) {
+  const email = String(process.env.SAFETY_NEW_REPORT_NOTIFICATION_EMAIL || 'brittneyh@saffhire.com').trim().toLowerCase();
+  const report = params.report || {};
+  const fileNumber = String(report.fileNumber || '').trim();
+  const applicantName = String(report.applicantName || '').trim();
+  const employerName = String(report.prevEmployerName || '').trim();
+  const subjectDetail = fileNumber ? `File #${fileNumber}` : (applicantName || 'New Report');
+  const subject = `New Safety Performance Report — ${subjectDetail}`;
+  const body = [
+    'A new Safety Performance report has been added.',
+    '',
+    `File Number: ${fileNumber || 'Not provided'}`,
+    `Applicant: ${applicantName || 'Not provided'}`,
+    `Previous Employer: ${employerName || 'Not provided'}`,
+    `Status: ${String(report.status || '').trim() || 'Consent Needed'}`,
+    params.origin ? `Open Safety Performance Reports: ${params.origin}` : '',
+    '',
+    'SaffHire Monitoring'
+  ].filter(Boolean).join('\n');
+
+  try {
+    const provider = await sendMonitoringNotificationEmail(email, subject, body);
+    return { attempted: true, sent: true, email, provider };
+  } catch (error: any) {
+    console.error('Automatic internal Safety Performance notification failed', {
+      reportId: report?.id,
+      fileNumber,
+      email,
+      message: errorMessage(error)
+    });
+    return { attempted: true, sent: false, email, reason: errorMessage(error) };
+  }
+}
+
 async function safetyReports(req: any, res: any, user: any) {
   const url = new URL(req.url || '/', 'https://local.test'); const companyId = requestedCompanyId(req, user);
   if (isClientScopedRole(user) && !canViewClientSafety(user)) {
@@ -549,15 +583,19 @@ async function safetyReports(req: any, res: any, user: any) {
     const placeholders = writable.cols.map((_, i) => `${i + 1}`).join(',');
     const inserted = await query(`insert into safety_reports (${writable.cols.join(',')}) values (${placeholders}) returning *`, reportValuesForFields(v, writable.fields));
     const applicantEmail = await safetyApplicantEmailForReport(companyId, v.fileNumber, body.applicantEmail, body);
+    const origin = safetyApplicationOrigin(req);
     const applicantNotification = await sendNewSafetyReportToApplicant({
       report: inserted.rows[0],
       applicantEmail,
-      origin: safetyApplicationOrigin(req)
+      origin
     });
+    const report = applicantNotification.report || inserted.rows[0];
+    const internalNotification = await sendNewSafetyReportInternalNotification({ report, origin });
     return json(res, 200, {
       status: 'ok',
-      report: applicantNotification.report || inserted.rows[0],
-      applicantNotification
+      report,
+      applicantNotification,
+      internalNotification
     });
   }
   if (req.method === 'PATCH') { await ensureSafetyStatusEnumValues(); const body = await readBody(req); const id = Number(body.id); if (!id) return json(res, 400, { status: 'error', message: 'Report id is required' }); const v = cleanReport(body, companyId); const writable = await safetyWritableColumns(); const assignments = writable.cols.slice(1).map((col, i) => `${col}=$${i + 1}`).join(','); const params = reportValuesForFields(v, writable.fields).slice(1); params.push(id, companyId); const r = await query(`update safety_reports set ${assignments}, "updatedAt"=now() where id=$${params.length - 1} and "companyId"=$${params.length} returning *`, params); return json(res, 200, { status: 'ok', report: r.rows[0] }); }
@@ -4625,13 +4663,15 @@ async function safetyCreateOrUpdateReportFromLive(companyId: number, host: strin
   const inserted = await query(`insert into safety_reports (${reportCols.join(',')}) values (${placeholders}) returning id`, reportValues(base));
   let report = await safetyUpdateExistingReportFromLive(inserted.rows[0].id, companyId, host, clientGuid, orderGuid, safetySearch, extracted);
   const applicantEmail = await safetyApplicantEmailForReport(companyId, fileNumber, extracted.applicantEmail, { extracted, safetySearch, order });
+  const applicationOrigin = origin || safetyApplicationOrigin();
   const applicantNotification = await sendNewSafetyReportToApplicant({
     report,
     applicantEmail,
-    origin: origin || safetyApplicationOrigin()
+    origin: applicationOrigin
   });
   if (applicantNotification.report) report = applicantNotification.report;
-  return { action: 'created', report, applicantNotification };
+  const internalNotification = await sendNewSafetyReportInternalNotification({ report, origin: applicationOrigin });
+  return { action: 'created', report, applicantNotification, internalNotification };
 }
 
 async function safetyCacheTazOrder(companyId: number, order: any) {
