@@ -190,10 +190,53 @@
     document.getElementById('logout-btn')?.addEventListener('click', logout);
   }
 
+  function renderRequiredPasswordChange() {
+    document.querySelectorAll('nav button[data-page]').forEach(button => { button.disabled = true; });
+    app.className = '';
+    app.innerHTML = `
+      <div class="head"><div><h2>Create Your Password</h2><p>Your administrator issued a temporary password. You must replace it before continuing.</p></div><div class="actions"><button class="btn danger" id="forced-password-logout">Logout</button></div></div>
+      <section class="card">
+        <form id="forced-password-form" class="form">
+          <label>Temporary Password<input name="currentPassword" type="password" required autocomplete="current-password"></label>
+          <label>New Password<input name="newPassword" type="password" required minlength="8" autocomplete="new-password"></label>
+          <label>Confirm New Password<input name="confirmation" type="password" required minlength="8" autocomplete="new-password"></label>
+          <button class="btn" type="submit">Set My Password</button>
+        </form>
+      </section>
+    `;
+    document.getElementById('forced-password-logout')?.addEventListener('click', logout);
+    document.getElementById('forced-password-form')?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const values = Object.fromEntries(new FormData(form).entries());
+      if (String(values.newPassword || '').length < 8) return toast('Your new password must be at least 8 characters.', true);
+      if (values.newPassword !== values.confirmation) return toast('The new passwords do not match.', true);
+      if (values.newPassword === values.currentPassword) return toast('Choose a password different from the temporary password.', true);
+      const button = form.querySelector('button[type="submit"]');
+      button.disabled = true;
+      button.textContent = 'Saving...';
+      try {
+        await api('change-password', { method: 'POST', body: JSON.stringify({ currentPassword: values.currentPassword, newPassword: values.newPassword }) });
+        state.user = { ...state.user, mustChangePassword: false };
+        document.querySelectorAll('nav button[data-page]').forEach(navButton => { navButton.disabled = false; });
+        toast('Password changed.');
+        await load();
+      } catch (error) {
+        toast(error.message || 'Could not change password.', true);
+        button.disabled = false;
+        button.textContent = 'Set My Password';
+      }
+    });
+  }
+
   async function boot() {
     try {
       const me = await api('client-auth/me');
       state.user = me.user || null;
+      if (state.user?.mustChangePassword) {
+        renderRequiredPasswordChange();
+        return;
+      }
       await load();
     } catch (error) {
       location.href = '/client-login.html';
