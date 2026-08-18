@@ -88,7 +88,15 @@ const REPORT_FIELDS = [
 const reportCols = ['"companyId"', ...REPORT_FIELDS.map((field) => `"${field}"`).map((col) => col === '"created"' || col === '"status"' || col === '"notes"' ? col.replaceAll('"', '') : col)];
 
 let safetyStatusEnumChecked = false;
+let safetyApplicantEmailColumnChecked = false;
 let safetyReportColumnCache: string[] | null = null;
+
+async function ensureSafetyApplicantEmailColumn() {
+  if (safetyApplicantEmailColumnChecked) return;
+  await query('alter table safety_reports add column if not exists "applicantEmail" text');
+  safetyApplicantEmailColumnChecked = true;
+  safetyReportColumnCache = null;
+}
 
 async function ensureSafetyStatusEnumValues() {
   if (safetyStatusEnumChecked) return;
@@ -106,6 +114,7 @@ async function ensureSafetyStatusEnumValues() {
 }
 
 async function getSafetyReportColumns() {
+  await ensureSafetyApplicantEmailColumn();
   if (safetyReportColumnCache) return safetyReportColumnCache;
   const r = await query(
     "select column_name from information_schema.columns where table_schema='public' and table_name='safety_reports'"
