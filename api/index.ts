@@ -428,7 +428,8 @@ function safetyApplicantEmailFromPayload(payload: any) {
       const nextPath = [...path, String(key).toLowerCase()];
       const keyLower = String(key).toLowerCase();
       const applicantContext = nextPath.some((part) => /applicant|subject|candidate|consumer|person/.test(part));
-      if (applicantContext && /email/.test(keyLower)) {
+      const emailContext = nextPath.some((part) => /e-?mail/.test(part));
+      if (applicantContext && emailContext) {
         const email = safetyApplicantEmail(child);
         if (email) return email;
       }
@@ -2285,6 +2286,16 @@ function mvrMedicalPreview(payload: any) {
 function orderFrom(row: any) {
   const subject = row?.subject || row?.applicant || row?.candidate || {};
   const applicantName = row.applicantName || row.subjectName || row.name || subject.fullName || subject.name || row.candidateName || [subject.lastName, subject.firstName].filter(Boolean).join(', ');
+  const applicantEmail = safetyApplicantEmail(
+    row.applicantEmail ||
+    row.email ||
+    row.emailAddress ||
+    subject.applicantEmail ||
+    subject.email ||
+    subject.emailAddress ||
+    subject.contactInfo?.email ||
+    ''
+  ) || safetyApplicantEmailFromPayload({ applicant: subject });
   const fileNumber = row.fileNumber || row.fileNo || row.file_number || row.orderNumber || row.orderNo || row.referenceId || row.ReferenceId || row.referenceID || row.referenceNumber || row.clientReference || row.clientReferenceId || row.customerReference || row.customerReferenceId || row.externalId || row.externalOrderId || row.orderReference || row.order?.fileNumber || row.order?.referenceId || '';
   return {
     orderGuid: row.orderGuid || row.orderGUID || row.guid || row.order?.orderGuid || row.order?.guid || row.id || '',
@@ -2294,6 +2305,7 @@ function orderFrom(row: any) {
     orderedDate: iso(row.orderedDate || row.orderDate || row.createdDate || row.createdAt),
     completedDate: iso(row.completedDate || row.completedAt),
     applicantName,
+    applicantEmail,
     clientName: row.clientName || row.client?.name || '',
     clientCode: row.clientCode || row.client?.code || '',
     productName: row.productName || row.packageName || row.package?.name || '',
@@ -4697,7 +4709,7 @@ async function safetyCreateOrUpdateReportFromLive(companyId: number, host: strin
     companyId,
     fileNumber,
     extracted.applicantEmail,
-    { extracted, safetySearch, order }
+    { extracted, safetySearch, order, applicant: order.raw || order }
   );
   extracted = { ...extracted, applicantEmail };
 
