@@ -4411,6 +4411,23 @@ async function safetyPullSearchResultPayload(orderGuid: string, searchGuid: stri
   throw lastError || new Error('Could not pull Safety Performance search result.');
 }
 
+async function safetyApplicantFromOrder(orderGuid: string, clientGuid: string, host: string) {
+  if (!orderGuid) return null;
+  const encodedOrder = encodeURIComponent(orderGuid);
+  const normalizedHost = safetyNormalizeHost(host);
+  const path = safetyQuery(
+    `/tazworks/orders/${encodedOrder}/applicant/pullFromOrder`,
+    { clientGuid, host: normalizedHost }
+  );
+  try {
+    const payload = await proxyGet(path);
+    const email = safetyApplicantEmailFromPayload({ applicant: payload });
+    return { payload, email, sourcePath: path };
+  } catch {
+    return null;
+  }
+}
+
 async function safetyApplicantDetails(applicantGuid: string, clientGuid: string, host: string) {
   if (!applicantGuid) return null;
   const encodedApplicant = encodeURIComponent(applicantGuid);
@@ -4734,7 +4751,10 @@ async function safetyCreateOrUpdateReportFromLive(companyId: number, host: strin
 
   const applicantDetails = extracted.applicantEmail
     ? null
-    : await safetyApplicantDetails(order.applicantGuid, clientGuid, host);
+    : (
+        await safetyApplicantFromOrder(orderGuid, clientGuid, host) ||
+        await safetyApplicantDetails(order.applicantGuid, clientGuid, host)
+      );
   const applicantEmail = await safetyApplicantEmailForReport(
     companyId,
     fileNumber,
