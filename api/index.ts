@@ -73,7 +73,7 @@ const BOOL_REPORT_FIELDS = new Set([
   'dotPriorEmployerReportedViolation', 'dotCompletedReturnToDutyProcess',
 ]);
 const REPORT_FIELDS = [
-  'applicantName', 'fileNumber', 'created', 'status', 'followUpDate', 'notes',
+  'applicantName', 'applicantEmail', 'fileNumber', 'created', 'status', 'followUpDate', 'notes',
   'prevEmployerName', 'prevEmployerEmail', 'prevEmployerStreet', 'prevEmployerPhone', 'prevEmployerFax', 'prevEmployerCityStateZip',
   'employerName', 'employerAttention', 'employerStreet', 'employerCityStateZip', 'employerPhone', 'employerFax', 'employerEmail', 'confFax', 'confEmail',
   'employedByCompany', 'jobTitle', 'fromDate', 'toDate', 'droveMotorVehicle',
@@ -88,7 +88,15 @@ const REPORT_FIELDS = [
 const reportCols = ['"companyId"', ...REPORT_FIELDS.map((field) => `"${field}"`).map((col) => col === '"created"' || col === '"status"' || col === '"notes"' ? col.replaceAll('"', '') : col)];
 
 let safetyStatusEnumChecked = false;
+let safetyApplicantEmailColumnChecked = false;
 let safetyReportColumnCache: string[] | null = null;
+
+async function ensureSafetyApplicantEmailColumn() {
+  if (safetyApplicantEmailColumnChecked) return;
+  await query('alter table safety_reports add column if not exists "applicantEmail" text');
+  safetyApplicantEmailColumnChecked = true;
+  safetyReportColumnCache = null;
+}
 
 async function ensureSafetyStatusEnumValues() {
   if (safetyStatusEnumChecked) return;
@@ -106,6 +114,7 @@ async function ensureSafetyStatusEnumValues() {
 }
 
 async function getSafetyReportColumns() {
+  await ensureSafetyApplicantEmailColumn();
   if (safetyReportColumnCache) return safetyReportColumnCache;
   const r = await query(
     "select column_name from information_schema.columns where table_schema='public' and table_name='safety_reports'"
@@ -361,6 +370,7 @@ function safetyCsvToReport(row: any) {
   const out: any = {};
   const aliases: Record<string, string[]> = {
     applicantName: ['applicantName', 'Applicant Name', 'Applicant', 'Name', 'Driver Name'],
+    applicantEmail: ['applicantEmail', 'Applicant Email', 'Candidate Email', 'Subject Email', 'Email Address'],
     fileNumber: ['fileNumber', 'File Number', 'File #', 'FileNumber', 'file_number'],
     created: ['created', 'Created', 'Create Date', 'Date Created'],
     status: ['status', 'Status'],
@@ -4530,10 +4540,17 @@ async function safetyReportsLivePull(req: any, res: any, user: any) {
   ].filter(Boolean);
 
   const liveMessage = `Live Safety Pull: ${liveNoteParts.join(' | ')}`;
+  const applicantEmail = await safetyApplicantEmailForReport(
+    companyId,
+    report.fileNumber,
+    extracted.applicantEmail,
+    { extracted, safetySearch }
+  );
 
   const update = await query(
     `update safety_reports
      set "applicantName"=coalesce(nullif($1,''), "applicantName"),
+         "applicantEmail"=coalesce(nullif($18,''), "applicantEmail"),
          "prevEmployerName"=coalesce(nullif($2,''), "prevEmployerName"),
          "prevEmployerEmail"=coalesce(nullif($3,''), "prevEmployerEmail"),
          "prevEmployerStreet"=coalesce(nullif($4,''), "prevEmployerStreet"),
@@ -4569,8 +4586,10 @@ async function safetyReportsLivePull(req: any, res: any, user: any) {
       extracted.orderSearchGuid,
       liveMessage,
       JSON.stringify(safetySearch || {}),
+      Boolean(extracted?.pendingResults),
       report.id,
-      companyId
+      companyId,
+      applicantEmail
     ]
   );
 
@@ -4625,6 +4644,7 @@ async function safetyUpdateExistingReportFromLive(reportId: number, companyId: n
   const update = await query(
     `update safety_reports
      set "applicantName"=coalesce(nullif($1,''), "applicantName"),
+         "applicantEmail"=coalesce(nullif($18,''), "applicantEmail"),
          "prevEmployerName"=coalesce(nullif($2,''), "prevEmployerName"),
          "prevEmployerEmail"=coalesce(nullif($3,''), "prevEmployerEmail"),
          "prevEmployerStreet"=coalesce(nullif($4,''), "prevEmployerStreet"),
@@ -4662,7 +4682,8 @@ async function safetyUpdateExistingReportFromLive(reportId: number, companyId: n
       JSON.stringify(safetySearch || {}),
       Boolean(extracted?.pendingResults),
       reportId,
-      companyId
+      companyId,
+      extracted.applicantEmail
     ]
   );
   return update.rows[0];
@@ -4671,6 +4692,14 @@ async function safetyUpdateExistingReportFromLive(reportId: number, companyId: n
 async function safetyCreateOrUpdateReportFromLive(companyId: number, host: string, clientGuid: string, orderGuid: string, order: any, safetySearch: any, extracted: any, origin = '') {
   const fileNumber = safetyCleanText(order.fileNumber || '');
   if (!fileNumber) throw new Error('Order did not include a file number.');
+
+  const applicantEmail = await safetyApplicantEmailForReport(
+    companyId,
+    fileNumber,
+    extracted.applicantEmail,
+    { extracted, safetySearch, order }
+  );
+  extracted = { ...extracted, applicantEmail };
 
   const existing = await query(
     `select id from safety_reports where "companyId"=$1 and trim("fileNumber"::text)=trim($2) order by id desc limit 1`,
@@ -4685,6 +4714,7 @@ async function safetyCreateOrUpdateReportFromLive(companyId: number, host: strin
   const defaults = await safetyCompanyDefaults(companyId);
   const base = cleanReport({
     applicantName: extracted.applicantName || order.applicantName || '',
+    applicantEmail,
     fileNumber,
     created: dateOnly(order.orderedDate || order.createdDate || new Date()) || new Date().toISOString().slice(0, 10),
     status: 'Consent Needed',
@@ -4721,7 +4751,6 @@ async function safetyCreateOrUpdateReportFromLive(companyId: number, host: strin
   const placeholders = reportCols.map((_, i) => `$${i + 1}`).join(',');
   const inserted = await query(`insert into safety_reports (${reportCols.join(',')}) values (${placeholders}) returning id`, reportValues(base));
   let report = await safetyUpdateExistingReportFromLive(inserted.rows[0].id, companyId, host, clientGuid, orderGuid, safetySearch, extracted);
-  const applicantEmail = await safetyApplicantEmailForReport(companyId, fileNumber, extracted.applicantEmail, { extracted, safetySearch, order });
   const applicationOrigin = origin || safetyApplicationOrigin();
   const applicantNotification = await sendNewSafetyReportToApplicant({
     report,
