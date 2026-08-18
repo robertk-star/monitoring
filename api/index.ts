@@ -2299,6 +2299,7 @@ function orderFrom(row: any) {
   const fileNumber = row.fileNumber || row.fileNo || row.file_number || row.orderNumber || row.orderNo || row.referenceId || row.ReferenceId || row.referenceID || row.referenceNumber || row.clientReference || row.clientReferenceId || row.customerReference || row.customerReferenceId || row.externalId || row.externalOrderId || row.orderReference || row.order?.fileNumber || row.order?.referenceId || '';
   return {
     orderGuid: row.orderGuid || row.orderGUID || row.guid || row.order?.orderGuid || row.order?.guid || row.id || '',
+    applicantGuid: row.applicantGuid || row.applicantGUID || row.subjectGuid || row.subjectGUID || row.consumerGuid || row.consumerGUID || subject.applicantGuid || subject.guid || subject.id || '',
     fileNumber,
     orderStatus: row.orderStatus || row.status || '',
     orderType: row.orderType || row.type || '',
@@ -4410,6 +4411,32 @@ async function safetyPullSearchResultPayload(orderGuid: string, searchGuid: stri
   throw lastError || new Error('Could not pull Safety Performance search result.');
 }
 
+async function safetyApplicantDetails(applicantGuid: string, clientGuid: string, host: string) {
+  if (!applicantGuid) return null;
+  const encodedApplicant = encodeURIComponent(applicantGuid);
+  const encodedClient = encodeURIComponent(clientGuid);
+  const normalizedHost = safetyNormalizeHost(host);
+  const paths = [
+    `/tazworks/clients/${encodedClient}/applicants/${encodedApplicant}`,
+    `/tazworks/v1/clients/${encodedClient}/applicants/${encodedApplicant}`,
+    `/tazworks/applicants/${encodedApplicant}`
+  ].map((path) => safetyQuery(path, {
+    clientGuid: path.includes('/applicants/') && !path.includes('/clients/') ? clientGuid : '',
+    host: normalizedHost
+  }));
+
+  for (const path of paths) {
+    try {
+      const payload = await proxyGet(path);
+      const email = safetyApplicantEmailFromPayload({ applicant: payload });
+      if (email) return { payload, email, sourcePath: path };
+    } catch {
+      // Try the next supported TazWorks applicant endpoint shape.
+    }
+  }
+  return null;
+}
+
 async function safetyAllSearchResults(orderGuid: string, clientGuid: string, host: string) {
   const encodedOrder = encodeURIComponent(orderGuid);
   const encodedClient = encodeURIComponent(clientGuid);
@@ -4705,11 +4732,14 @@ async function safetyCreateOrUpdateReportFromLive(companyId: number, host: strin
   const fileNumber = safetyCleanText(order.fileNumber || '');
   if (!fileNumber) throw new Error('Order did not include a file number.');
 
+  const applicantDetails = extracted.applicantEmail
+    ? null
+    : await safetyApplicantDetails(order.applicantGuid, clientGuid, host);
   const applicantEmail = await safetyApplicantEmailForReport(
     companyId,
     fileNumber,
-    extracted.applicantEmail,
-    { extracted, safetySearch, order, applicant: order.raw || order }
+    extracted.applicantEmail || applicantDetails?.email,
+    { extracted, safetySearch, order, applicant: applicantDetails?.payload || order.raw || order }
   );
   extracted = { ...extracted, applicantEmail };
 
