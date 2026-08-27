@@ -524,7 +524,7 @@ function downloadMonitoringCsv(applicants) {
   URL.revokeObjectURL(url);
 }
 
-function MonitoringAlerts({ applicants, activeFilter, onFilterChange }) {
+function MonitoringAlerts({ applicants, downloadApplicants = applicants, activeFilter, onFilterChange, selectedCount = 0, removedCount = 0, onRemoveSelected, onRestoreRemoved }) {
   const counts = monitoringAlertCounts(applicants);
   const items = [
     ['all', 'Total', counts.total],
@@ -558,9 +558,12 @@ function MonitoringAlerts({ applicants, activeFilter, onFilterChange }) {
       </div>
       <div className="monitoring-alert-actions-native">
         <button type="button" onClick={() => navigator.clipboard?.writeText(summary).catch(() => window.prompt('Copy this summary:', summary))}>Copy Summary</button>
-        <button type="button" onClick={() => downloadMonitoringCsv(applicants)}>Download Current View CSV</button>
+        <button type="button" onClick={() => downloadMonitoringCsv(downloadApplicants)}>Download Current View CSV</button>
+        <button type="button" disabled={!selectedCount} onClick={onRemoveSelected}>Remove Selected ({selectedCount})</button>
+        {removedCount ? <button type="button" onClick={onRestoreRemoved}>Restore Removed ({removedCount})</button> : null}
         <button type="button" onClick={() => onFilterChange(activeFilter || 'all')}>Recalculate Alerts</button>
       </div>
+      <p>Check rows you do not want in the CSV, then click Remove Selected. This only changes the pending download list; it does not delete applicant records.</p>
       <p>Sort records by clicking the table headers for File #, Name, Order Date, or Med Expire.</p>
     </section>
   );
@@ -608,6 +611,8 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
   const [status, setStatus] = useState('All');
   const [sort, setSort] = useState({ key: '', direction: 'asc' });
   const [alertFilter, setAlertFilter] = useState(() => localStorage.getItem('monitoring-alert-filter') || 'all');
+  const [selectedRows, setSelectedRows] = useState(() => new Set());
+  const [removedRows, setRemovedRows] = useState(() => new Set());
 
   function setAlertFilterPersisted(nextFilter) {
     const value = nextFilter || 'all';
@@ -618,6 +623,7 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
   const activeDashboardFilter = dashboardFilter?.page === 'monitoring' ? dashboardFilter : null;
 
   const filtered = useMemo(() => applicants.filter((a) => {
+    if (removedRows.has(a.id)) return false;
     const term = query.toLowerCase();
     const matches = !term || `${a.fileNumber} ${a.name} ${a.orderDate} ${a.monitorStatus} ${a.mvrStatus} ${a.medExpire} ${a.notes}`.toLowerCase().includes(term);
     const statusOk = status === 'All' || a.monitorStatus === status;
@@ -628,7 +634,7 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
     let alertOk = true;
     if (alertFilter && alertFilter !== 'all') alertOk = monitoringAlertState(a) === alertFilter;
     return matches && statusOk && dashboardOk && alertOk;
-  }), [applicants, query, status, activeDashboardFilter, alertFilter]);
+  }), [applicants, query, status, activeDashboardFilter, alertFilter, removedRows]);
 
   function sortValue(row, key) {
     const value = row?.[key];
@@ -701,22 +707,41 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
     }
   }
 
+  function toggleSelected(id) {
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function removeSelectedRows() {
+    if (!selectedRows.size) return;
+    setRemovedRows((current) => new Set([...current, ...selectedRows]));
+    setSelectedRows(new Set());
+  }
+
+  function restoreRemovedRows() {
+    setRemovedRows(new Set());
+  }
+
   return (
     <>
       <Header title="Monitoring" subtitle={`${company?.name || 'Driver Pipeline'} · ${sorted.length} records`} action={refresh} />
-      <MonitoringAlerts applicants={applicants} activeFilter={alertFilter} onFilterChange={setAlertFilterPersisted} />
+      <MonitoringAlerts applicants={applicants} downloadApplicants={sorted} activeFilter={alertFilter} onFilterChange={setAlertFilterPersisted} selectedCount={selectedRows.size} removedCount={removedRows.size} onRemoveSelected={removeSelectedRows} onRestoreRemoved={restoreRemovedRows} />
       <DashboardFilterBanner filter={activeDashboardFilter} onClear={clearDashboardFilter} />
       <section className="card toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search file number, name, notes..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>On</option><option>Off</option></select></section>
-      <section className="card table-card"><table><thead><tr><SortHeader label="File #" sortKey="fileNumber" /><SortHeader label="Name" sortKey="name" /><SortHeader label="Order Date" sortKey="orderDate" /><SortHeader label="Monitoring" sortKey="monitorStatus" /><SortHeader label="MVR Status" sortKey="mvrStatus" /><SortHeader label="Med Expire" sortKey="medExpire" /><SortHeader label="Notes" sortKey="notes" /><th></th></tr></thead><tbody>{sorted.map((a) => <ApplicantRow key={a.id} applicant={a} onSave={updateApplicant} />)}</tbody></table>{!sorted.length ? <div className="empty">No applicants found. Import your CSV data into Supabase.</div> : null}</section>
+      <section className="card table-card"><table><thead><tr><th>Remove</th><SortHeader label="File #" sortKey="fileNumber" /><SortHeader label="Name" sortKey="name" /><SortHeader label="Order Date" sortKey="orderDate" /><SortHeader label="Monitoring" sortKey="monitorStatus" /><SortHeader label="MVR Status" sortKey="mvrStatus" /><SortHeader label="Med Expire" sortKey="medExpire" /><SortHeader label="Notes" sortKey="notes" /><th></th></tr></thead><tbody>{sorted.map((a) => <ApplicantRow key={a.id} applicant={a} onSave={updateApplicant} selected={selectedRows.has(a.id)} onToggleSelected={() => toggleSelected(a.id)} />)}</tbody></table>{!sorted.length ? <div className="empty">No applicants found. Import your CSV data into Supabase.</div> : null}</section>
     </>
   );
 }
 
-function ApplicantRow({ applicant, onSave }) {
+function ApplicantRow({ applicant, onSave, selected, onToggleSelected }) {
   const [draft, setDraft] = useState(applicant);
   useEffect(() => setDraft(applicant), [applicant]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(applicant);
-  return <tr><td><b>{applicant.fileNumber}</b></td><td>{applicant.name}</td><td>{applicant.orderDate}</td><td><select value={draft.monitorStatus} onChange={(e) => setDraft({ ...draft, monitorStatus: e.target.value })}><option>On</option><option>Off</option></select></td><td>{applicant.mvrStatus}</td><td><input className="small-input" value={draft.medExpire || ''} onChange={(e) => setDraft({ ...draft, medExpire: e.target.value })} /></td><td><input value={draft.notes || ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></td><td><button className="icon-btn" disabled={!dirty} onClick={() => onSave(applicant, { monitorStatus: draft.monitorStatus, medExpire: draft.medExpire, notes: draft.notes })}><Save size={16} /></button></td></tr>;
+  return <tr><td><input type="checkbox" className="monitoring-row-checkbox" checked={selected} onChange={onToggleSelected} aria-label={`Select file ${applicant.fileNumber || applicant.name} for removal from CSV`} /></td><td><b>{applicant.fileNumber}</b></td><td>{applicant.name}</td><td>{applicant.orderDate}</td><td><select value={draft.monitorStatus} onChange={(e) => setDraft({ ...draft, monitorStatus: e.target.value })}><option>On</option><option>Off</option></select></td><td>{applicant.mvrStatus}</td><td><input className="small-input" value={draft.medExpire || ''} onChange={(e) => setDraft({ ...draft, medExpire: e.target.value })} /></td><td><input value={draft.notes || ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></td><td><button className="icon-btn" disabled={!dirty} onClick={() => onSave(applicant, { monitorStatus: draft.monitorStatus, medExpire: draft.medExpire, notes: draft.notes })}><Save size={16} /></button></td></tr>;
 }
 
 
