@@ -1659,6 +1659,40 @@
   }
 
 
+  function selectedQueueIds(action) {
+    return Array.from(document.querySelectorAll(`[data-phase12a60-select="${action}"]:checked`))
+      .map((input) => Number(input.value))
+      .filter((id) => Number.isInteger(id) && id > 0);
+  }
+
+  function updateDeleteSelectedButton(action) {
+    const button = document.querySelector(`[data-phase12a60-delete-selected="${action}"]`);
+    if (!button) return;
+    const count = selectedQueueIds(action).length;
+    button.disabled = count === 0;
+    button.textContent = `Delete Selected (${count})`;
+  }
+
+  async function deleteSelectedRows(action, label) {
+    const selectedIds = selectedQueueIds(action);
+
+    if (!selectedIds.length) {
+      alert(`Select at least one row in ${label}.`);
+      return;
+    }
+
+    if (!confirm(`Delete ${selectedIds.length} selected row(s) from ${label}? This only removes the pending export line.`)) return;
+
+    const data = await api('monitoring-on-off/remove', {
+      method: 'POST',
+      body: JSON.stringify({ action, ids: selectedIds })
+    });
+
+    alert(`Deleted ${data.removed || 0} selected row(s).`);
+    await renderPage(true);
+  }
+
+
   async function saveDob(rowId, dob, button) {
     if (!rowId) {
       alert('Missing queue row id.');
@@ -1708,6 +1742,7 @@
           </div>
           <div class="phase12a60-actions">
             <button type="button" data-phase12a60-download="${esc(type)}">Download CSV</button>
+            <button type="button" class="phase12a60-delete-selected" data-phase12a60-delete-selected="${esc(type)}" disabled>Delete Selected (0)</button>
             <button type="button" data-phase12a60-clear="${esc(type)}">Clear Section</button>
           </div>
         </div>
@@ -1716,12 +1751,14 @@
           <table class="phase12a60-table">
             <thead>
               <tr>
+                <th>Select</th>
                 ${DISPLAY_HEADERS.map((h) => `<th>${esc(h)}</th>`).join('')}
               </tr>
             </thead>
             <tbody>
               ${rows.length ? rows.map((row) => `
                 <tr>
+                  <td><input type="checkbox" class="phase12a60-row-select" data-phase12a60-select="${esc(type)}" value="${esc(row.id)}" aria-label="Select reference ${esc(row.ReferenceId || row.id)} for deletion" /></td>
                   ${rowValues(row).map((value, index) => {
                     if (HEADERS[index] === 'DOB') {
                       return `<td><div class="phase12a63-dob-edit"><input data-phase12a63-dob="${esc(row.id)}" value="${esc(value || '')}" placeholder="YYYY-MM-DD or MM/DD/YYYY" /><button type="button" data-phase12a63-save-dob="${esc(row.id)}">Save DOB</button></div></td>`;
@@ -1730,7 +1767,7 @@
                   }).join('')}
                   <td>${esc(formatChangedAt(row.createdAt))}</td>
                 </tr>
-              `).join('') : `<tr><td colspan="${DISPLAY_HEADERS.length}" class="phase12a60-empty">No rows waiting.</td></tr>`}
+              `).join('') : `<tr><td colspan="${DISPLAY_HEADERS.length + 1}" class="phase12a60-empty">No rows waiting.</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -1785,6 +1822,17 @@
       button.addEventListener('click', () => {
         const type = button.dataset.phase12a60Clear;
         clearSection(type, type === 'on' ? 'Turn Monitoring On' : 'Turn Monitoring Off');
+      });
+    });
+
+    document.querySelectorAll('[data-phase12a60-select]').forEach((checkbox) => {
+      checkbox.addEventListener('change', () => updateDeleteSelectedButton(checkbox.dataset.phase12a60Select));
+    });
+
+    document.querySelectorAll('[data-phase12a60-delete-selected]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const type = button.dataset.phase12a60DeleteSelected;
+        deleteSelectedRows(type, type === 'on' ? 'Turn Monitoring On' : 'Turn Monitoring Off');
       });
     });
   }
@@ -1979,6 +2027,25 @@
       .phase12a60-empty {
         color: #64748b;
         font-weight: 800;
+      }
+
+      .phase12a60-row-select {
+        width: 18px;
+        height: 18px;
+        min-width: 18px;
+        accent-color: #16a34a;
+        cursor: pointer;
+      }
+
+      .phase12a60-actions button.phase12a60-delete-selected {
+        border-color: #dc2626;
+        background: #fef2f2;
+        color: #b91c1c;
+      }
+
+      .phase12a60-actions button:disabled {
+        opacity: .45;
+        cursor: not-allowed;
       }
 
       .phase12a63-dob-edit {
