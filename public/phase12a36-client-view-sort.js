@@ -1649,6 +1649,27 @@
     await renderPage(true);
   }
 
+  async function deleteSelectedRows(action, label) {
+    const selectedIds = Array.from(document.querySelectorAll(`[data-phase12a60-select="${action}"]:checked`))
+      .map((input) => Number(input.value))
+      .filter((id) => Number.isInteger(id) && id > 0);
+
+    if (!selectedIds.length) {
+      alert(`Select at least one row in ${label}.`);
+      return;
+    }
+
+    if (!confirm(`Delete ${selectedIds.length} selected row(s) from ${label}? This only removes the pending export line.`)) return;
+
+    const data = await api('monitoring-on-off/clear', {
+      method: 'POST',
+      body: JSON.stringify({ action, ids: selectedIds })
+    });
+
+    alert(`Deleted ${data.cleared || 0} selected row(s).`);
+    await renderPage(true);
+  }
+
 
   async function saveDob(rowId, dob, button) {
     if (!rowId) {
@@ -1699,6 +1720,7 @@
           </div>
           <div class="phase12a60-actions">
             <button type="button" data-phase12a60-download="${esc(type)}">Download CSV</button>
+            <button type="button" data-phase12a60-delete-selected="${esc(type)}">Delete Selected</button>
             <button type="button" data-phase12a60-clear="${esc(type)}">Clear Section</button>
           </div>
         </div>
@@ -1707,12 +1729,14 @@
           <table class="phase12a60-table">
             <thead>
               <tr>
+                <th>Select</th>
                 ${DISPLAY_HEADERS.map((h) => `<th>${esc(h)}</th>`).join('')}
               </tr>
             </thead>
             <tbody>
               ${rows.length ? rows.map((row) => `
                 <tr>
+                  <td><input type="checkbox" class="phase12a60-row-select" data-phase12a60-select="${esc(type)}" value="${esc(row.id)}" aria-label="Select reference ${esc(row.ReferenceId || row.id)} for deletion" /></td>
                   ${rowValues(row).map((value, index) => {
                     if (HEADERS[index] === 'DOB') {
                       return `<td><div class="phase12a63-dob-edit"><input data-phase12a63-dob="${esc(row.id)}" value="${esc(value || '')}" placeholder="YYYY-MM-DD or MM/DD/YYYY" /><button type="button" data-phase12a63-save-dob="${esc(row.id)}">Save DOB</button></div></td>`;
@@ -1721,7 +1745,7 @@
                   }).join('')}
                   <td>${esc(formatChangedAt(row.createdAt))}</td>
                 </tr>
-              `).join('') : `<tr><td colspan="${DISPLAY_HEADERS.length}" class="phase12a60-empty">No rows waiting.</td></tr>`}
+              `).join('') : `<tr><td colspan="${DISPLAY_HEADERS.length + 1}" class="phase12a60-empty">No rows waiting.</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -1776,6 +1800,13 @@
       button.addEventListener('click', () => {
         const type = button.dataset.phase12a60Clear;
         clearSection(type, type === 'on' ? 'Turn Monitoring On' : 'Turn Monitoring Off');
+      });
+    });
+
+    document.querySelectorAll('[data-phase12a60-delete-selected]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const type = button.dataset.phase12a60DeleteSelected;
+        deleteSelectedRows(type, type === 'on' ? 'Turn Monitoring On' : 'Turn Monitoring Off');
       });
     });
   }
@@ -1965,6 +1996,14 @@
         color: #475569;
         text-transform: uppercase;
         font-size: 12px;
+      }
+
+      .phase12a60-row-select {
+        width: 18px;
+        height: 18px;
+        min-width: 18px;
+        accent-color: #16a34a;
+        cursor: pointer;
       }
 
       .phase12a60-empty {
