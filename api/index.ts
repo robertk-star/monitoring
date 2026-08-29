@@ -332,20 +332,6 @@ async function companies(req: any, res: any, user: any) {
   return json(res, 405, { status: 'error', message: 'Method not allowed' });
 }
 
-// Keep TazWorks orders that have been canceled out of every Monitoring view.
-// Check both the current applicant status and the authoritative order cache so
-// previously synced records disappear without deleting their stored history.
-const activeMonitoringOrderFilter = `
-  and lower(trim(coalesce(applicants."mvrStatus"::text, ''))) !~ '(^|[^a-z])cancel(l)?ed([^a-z]|$)'
-  and lower(trim(coalesce((
-    select monitoring_order.order_status
-      from tazworks_order_cache monitoring_order
-     where monitoring_order.company_id=applicants."companyId"
-       and trim(coalesce(monitoring_order.file_number, ''))=trim(applicants."fileNumber"::text)
-     order by monitoring_order.last_seen_at desc nulls last
-     limit 1
-  ), ''))) !~ '(^|[^a-z])cancel(l)?ed([^a-z]|$)'`;
-
 async function applicants(req: any, res: any, user: any) {
   const url = new URL(req.url || '/', 'https://local.test'); const companyId = requestedCompanyId(req, user);
   if (isClientScopedRole(user) && !canViewClientMonitoring(user)) {
@@ -354,7 +340,7 @@ async function applicants(req: any, res: any, user: any) {
   if (req.method === 'GET') {
     const canSeeTerminated = !isClientScopedRole(user) || canAccessClientTerminated(user);
     const result = await query(`select id, "fileNumber", "applicantName" as name, "orderDate", "monitorStatus", "mvrStatus", "medExpire", "terminated", notes
-      from applicants where "companyId"=$1 ${activeMonitoringOrderFilter} ${canSeeTerminated ? '' : 'and coalesce("terminated",false)=false'} order by id desc limit 10000`, [companyId]);
+      from applicants where "companyId"=$1 ${canSeeTerminated ? '' : 'and coalesce("terminated",false)=false'} order by id desc limit 10000`, [companyId]);
     return json(res, 200, { status: 'ok', applicants: result.rows });
   }
   if (req.method === 'PATCH') {
@@ -1268,17 +1254,17 @@ async function clientDashboard(req: any, res: any, user: any) {
   const monitoringTerminatedFilter = showTerminated ? '' : 'and coalesce("terminated",false)=false';
   const recentApplicants = showMonitoring ? await query(
     `select id, "fileNumber", "applicantName" as name, "orderDate", "monitorStatus", "mvrStatus", "medExpire", "terminated", notes
-     from applicants where "companyId"=$1 ${activeMonitoringOrderFilter} ${monitoringTerminatedFilter} order by id desc limit 1000`, [companyId]) : { rows: [] };
+     from applicants where "companyId"=$1 ${monitoringTerminatedFilter} order by id desc limit 1000`, [companyId]) : { rows: [] };
 
   // Terminated page needs a dedicated list so it is not hidden behind the Monitoring page filters.
   // It is still company-scoped and only returned when Terminated Records access is enabled.
   const terminatedApplicants = (showMonitoring && showTerminated) ? await query(
     `select id, "fileNumber", "applicantName" as name, "orderDate", "monitorStatus", "mvrStatus", "medExpire", "terminated", notes
-     from applicants where "companyId"=$1 ${activeMonitoringOrderFilter} and coalesce("terminated",false)=true order by id desc limit 10000`, [companyId]) : { rows: [] };
+     from applicants where "companyId"=$1 and coalesce("terminated",false)=true order by id desc limit 10000`, [companyId]) : { rows: [] };
 
   const applicantStatsRows = showMonitoring ? await query(
     `select "monitorStatus", "medExpire", "terminated"
-     from applicants where "companyId"=$1 ${activeMonitoringOrderFilter} ${monitoringTerminatedFilter}`, [companyId]) : { rows: [] };
+     from applicants where "companyId"=$1 ${monitoringTerminatedFilter}`, [companyId]) : { rows: [] };
 
   const recentSafety = showSafety ? await query(
     `select id, "fileNumber", "applicantName", created, status, "followUpDate", "prevEmployerName", notes
@@ -3631,34 +3617,18 @@ async function monitoringOnOffExportsClear(req: any, res: any, user: any) {
   const companyId = requestedCompanyId(req, user);
   const body = await readBody(req);
   const action = String(body.action || '').trim().toLowerCase();
-  const hasSelectedIds = Array.isArray(body.ids);
-  const selectedIds = hasSelectedIds
-    ? Array.from(new Set(body.ids.map((value: any) => Number(value)).filter((id: number) => Number.isInteger(id) && id > 0)))
-    : [];
 
   if (!['on', 'off'].includes(action)) {
     return json(res, 400, { status: 'error', message: 'action must be on or off' });
   }
 
-  if (hasSelectedIds && !selectedIds.length) {
-    return json(res, 400, { status: 'error', message: 'At least one valid row id is required' });
-  }
-
-  const result = hasSelectedIds
-    ? await query(
-      `update monitoring_on_off_exports
-       set "clearedAt"=now(), "clearedBy"=$1
-       where "companyId"=$2 and action=$3 and "clearedAt" is null and id=any($4::bigint[])
-       returning id`,
-      [user?.username || user?.displayName || '', companyId, action, selectedIds]
-    )
-    : await query(
-      `update monitoring_on_off_exports
-       set "clearedAt"=now(), "clearedBy"=$1
-       where "companyId"=$2 and action=$3 and "clearedAt" is null
-       returning id`,
-      [user?.username || user?.displayName || '', companyId, action]
-    );
+  const result = await query(
+    `update monitoring_on_off_exports
+     set "clearedAt"=now(), "clearedBy"=$1
+     where "companyId"=$2 and action=$3 and "clearedAt" is null
+     returning id`,
+    [user?.username || user?.displayName || '', companyId, action]
+  );
 
   return json(res, 200, { status: 'ok', cleared: result.rows.length });
 }
