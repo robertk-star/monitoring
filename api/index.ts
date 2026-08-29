@@ -3633,6 +3633,35 @@ async function monitoringOnOffExportsClear(req: any, res: any, user: any) {
   return json(res, 200, { status: 'ok', cleared: result.rows.length });
 }
 
+async function monitoringOnOffExportsRemove(req: any, res: any, user: any) {
+  if (!requireMonitoringReportAdmin(user, res)) return;
+  if (req.method !== 'POST') return json(res, 405, { status: 'error', message: 'Method not allowed' });
+
+  const companyId = requestedCompanyId(req, user);
+  const body = await readBody(req);
+  const action = String(body.action || '').trim().toLowerCase();
+  const ids = Array.isArray(body.ids)
+    ? Array.from(new Set(body.ids.map((value: any) => Number(value)).filter((id: number) => Number.isInteger(id) && id > 0)))
+    : [];
+
+  if (!['on', 'off'].includes(action)) {
+    return json(res, 400, { status: 'error', message: 'action must be on or off' });
+  }
+  if (!ids.length) {
+    return json(res, 400, { status: 'error', message: 'At least one valid queue row id is required' });
+  }
+
+  const result = await query(
+    `update monitoring_on_off_exports
+     set "clearedAt"=now(), "clearedBy"=$1
+     where "companyId"=$2 and action=$3 and "clearedAt" is null and id=any($4::bigint[])
+     returning id`,
+    [user?.username || user?.displayName || '', companyId, action, ids]
+  );
+
+  return json(res, 200, { status: 'ok', removed: result.rows.length });
+}
+
 async function monitoringOnOffExportsRepair(req: any, res: any, user: any) {
   if (!requireMonitoringReportAdmin(user, res)) return;
   if (req.method !== 'POST') return json(res, 405, { status: 'error', message: 'Method not allowed' });
@@ -5733,7 +5762,7 @@ export default async function handler(req: any, res: any) {
     if (String(user.role || '') === 'user') {
       const monitoringRoutes = new Set([
         'applicants', 'import-applicants', 'tazworks-sync/run', 'tazworks-sync/runs', 'tazworks-sync/clear',
-        'tazworks-mvr-test', 'monitoring-on-off', 'monitoring-on-off/clear', 'monitoring-on-off/repair', 'monitoring-on-off/update'
+        'tazworks-mvr-test', 'monitoring-on-off', 'monitoring-on-off/clear', 'monitoring-on-off/remove', 'monitoring-on-off/repair', 'monitoring-on-off/update'
       ]);
       const safetyRoutes = new Set([
         'safety-reports', 'safety-reports/live-pull', 'safety-reports/fax-fmcsa', 'safety-reports/live-discover',
@@ -5772,6 +5801,7 @@ export default async function handler(req: any, res: any) {
     if (route === 'invoices/pdf') return invoicePdf(req, res, user);
     if (route === 'monitoring-on-off') return monitoringOnOffExports(req, res, user);
     if (route === 'monitoring-on-off/clear') return monitoringOnOffExportsClear(req, res, user);
+    if (route === 'monitoring-on-off/remove') return monitoringOnOffExportsRemove(req, res, user);
     if (route === 'monitoring-on-off/repair') return monitoringOnOffExportsRepair(req, res, user);
     if (route === 'monitoring-on-off/update') return monitoringOnOffExportsUpdate(req, res, user);
     if (route === 'invoices/diagnostics') return invoiceDiagnostics(req, res, user);
