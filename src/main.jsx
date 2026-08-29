@@ -624,6 +624,18 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
 
   const activeDashboardFilter = dashboardFilter?.page === 'monitoring' ? dashboardFilter : null;
 
+  useEffect(() => {
+    if (!activeDashboardFilter?.filter || activeDashboardFilter.filter === 'all') return;
+    setAlertFilterPersisted('all');
+    setStatus('All');
+  }, [activeDashboardFilter?.filter]);
+
+  function changeAlertFilter(nextFilter) {
+    if (activeDashboardFilter) clearDashboardFilter();
+    setStatus('All');
+    setAlertFilterPersisted(nextFilter);
+  }
+
   const filtered = useMemo(() => applicants.filter((a) => {
     const term = query.toLowerCase();
     const matches = !term || `${a.fileNumber} ${a.name} ${a.orderDate} ${a.monitorStatus} ${a.mvrStatus} ${a.medExpire} ${a.notes}`.toLowerCase().includes(term);
@@ -710,7 +722,7 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
   return (
     <>
       <Header title="Monitoring" subtitle={`${company?.name || 'Driver Pipeline'} · ${sorted.length} records`} action={refresh} />
-      <MonitoringAlerts applicants={applicants} activeFilter={alertFilter} onFilterChange={setAlertFilterPersisted} />
+      <MonitoringAlerts applicants={applicants} activeFilter={alertFilter} onFilterChange={changeAlertFilter} />
       <DashboardFilterBanner filter={activeDashboardFilter} onClear={clearDashboardFilter} />
       <section className="card toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search file number, name, notes..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>On</option><option>Off</option></select></section>
       <section className="card table-card"><table data-native-monitoring-table="true"><thead><tr><SortHeader label="File #" sortKey="fileNumber" /><SortHeader label="Name" sortKey="name" /><SortHeader label="Order Date" sortKey="orderDate" /><SortHeader label="Monitoring" sortKey="monitorStatus" /><SortHeader label="MVR Status" sortKey="mvrStatus" /><SortHeader label="Med Expire" sortKey="medExpire" /><SortHeader label="Notes" sortKey="notes" /><th></th></tr></thead><tbody>{sorted.map((a) => <ApplicantRow key={a.id} applicant={a} onSave={updateApplicant} />)}</tbody></table>{!sorted.length ? <div className="empty">No applicants found. Import your CSV data into Supabase.</div> : null}</section>
