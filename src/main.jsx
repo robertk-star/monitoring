@@ -5,7 +5,7 @@ import { Activity, ArrowLeft, ClipboardCheck, Copy, Database, LogOut, Mail, Penc
 import SettingsManager from './SettingsPage.jsx';
 import './styles.css';
 
-const LOGO = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663368468239/3wvjutsFdcEUnRywyqJHNV/SaffhireLogoShirtStyle_0449b2e9.webp';
+const LOGO = '/saffhire-logo-invoice.png';
 const STATUSES = ['Consent Needed', 'Sent to Applicant', 'Consent Given', 'S1 Complete', 'Emp Sent', 'Emp Complete', 'Completed'];
 const VEHICLES = [
   ['vehicleStraightTruck', 'Straight Truck'],

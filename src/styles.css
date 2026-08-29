@@ -125,3 +125,16 @@
 .client-access-check span{font-size:12px;color:#334155;margin:0}
 td .client-access-grid{grid-template-columns:1fr;min-width:180px}
 @media(max-width:1100px){.client-access-head{display:block}.client-access-head select{max-width:none;margin-top:8px}.client-access-grid{grid-template-columns:1fr}}
+
+/* Keep the locally hosted SaffHire logo contained inside the admin sidebar. */
+.side-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 76px;
+  object-fit: contain;
+  align-self: stretch;
+  background: #fff;
+  border-radius: 14px;
+  padding: 10px;
+}
