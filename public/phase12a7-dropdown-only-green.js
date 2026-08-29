@@ -28,24 +28,14 @@
     return Array.from(table.querySelectorAll('tbody tr')).filter((row) => row.querySelectorAll('td').length >= 7);
   }
 
-  function monitoringColumnIndex(table) {
-    return Array.from(table.querySelectorAll('thead th')).findIndex((th) =>
-      text(th).replace(/[↕↑↓]/g, '').trim().toLowerCase() === 'monitoring'
-    );
-  }
-
   function applyDropdownOnlyStyle() {
     if (!isMonitoringPage()) return;
 
     document.body.classList.add('phase12a7-dropdown-only-green');
 
-    const table = getMonitoringTable();
-    const monitoringIndex = table ? monitoringColumnIndex(table) : -1;
-    if (monitoringIndex < 0) return;
-
     rows().forEach((row) => {
       const cells = Array.from(row.querySelectorAll('td'));
-      const select = cells[monitoringIndex] ? cells[monitoringIndex].querySelector('select') : null;
+      const select = cells[3] ? cells[3].querySelector('select') : null;
       if (!select) return;
 
       const isOn = String(select.value || '').trim() === 'On';

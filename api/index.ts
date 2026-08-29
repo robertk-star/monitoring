@@ -3631,18 +3631,34 @@ async function monitoringOnOffExportsClear(req: any, res: any, user: any) {
   const companyId = requestedCompanyId(req, user);
   const body = await readBody(req);
   const action = String(body.action || '').trim().toLowerCase();
+  const hasSelectedIds = Array.isArray(body.ids);
+  const selectedIds = hasSelectedIds
+    ? Array.from(new Set(body.ids.map((value: any) => Number(value)).filter((id: number) => Number.isInteger(id) && id > 0)))
+    : [];
 
   if (!['on', 'off'].includes(action)) {
     return json(res, 400, { status: 'error', message: 'action must be on or off' });
   }
 
-  const result = await query(
-    `update monitoring_on_off_exports
-     set "clearedAt"=now(), "clearedBy"=$1
-     where "companyId"=$2 and action=$3 and "clearedAt" is null
-     returning id`,
-    [user?.username || user?.displayName || '', companyId, action]
-  );
+  if (hasSelectedIds && !selectedIds.length) {
+    return json(res, 400, { status: 'error', message: 'At least one valid row id is required' });
+  }
+
+  const result = hasSelectedIds
+    ? await query(
+      `update monitoring_on_off_exports
+       set "clearedAt"=now(), "clearedBy"=$1
+       where "companyId"=$2 and action=$3 and "clearedAt" is null and id=any($4::bigint[])
+       returning id`,
+      [user?.username || user?.displayName || '', companyId, action, selectedIds]
+    )
+    : await query(
+      `update monitoring_on_off_exports
+       set "clearedAt"=now(), "clearedBy"=$1
+       where "companyId"=$2 and action=$3 and "clearedAt" is null
+       returning id`,
+      [user?.username || user?.displayName || '', companyId, action]
+    );
 
   return json(res, 200, { status: 'ok', cleared: result.rows.length });
 }

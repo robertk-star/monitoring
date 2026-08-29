@@ -125,6 +125,3 @@
 .client-access-check span{font-size:12px;color:#334155;margin:0}
 td .client-access-grid{grid-template-columns:1fr;min-width:180px}
 @media(max-width:1100px){.client-access-head{display:block}.client-access-head select{max-width:none;margin-top:8px}.client-access-grid{grid-template-columns:1fr}}
-
-.monitoring-alert-actions-native button:disabled{opacity:.45;cursor:not-allowed}
-.monitoring-row-checkbox{width:18px;height:18px;min-width:18px;accent-color:#16a34a}
