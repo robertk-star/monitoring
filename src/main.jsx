@@ -489,6 +489,13 @@ function monitoringAlertState(applicant) {
   return 'ok';
 }
 
+function monitoringMatchesAlertFilter(applicant, alertFilter) {
+  if (!alertFilter || alertFilter === 'all') return true;
+  if (alertFilter === 'on') return monitoringIsOn(applicant);
+  if (alertFilter === 'off') return !monitoringIsOn(applicant);
+  return monitoringAlertState(applicant) === alertFilter;
+}
+
 function monitoringAlertCounts(applicants) {
   const out = { total: 0, on: 0, off: 0, expired: 0, exp30: 0, exp60: 0, blank: 0, mvr: 0 };
   applicants.forEach((applicant) => {
@@ -625,8 +632,7 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
     if (activeDashboardFilter?.filter === 'on') dashboardOk = a.monitorStatus === 'On';
     if (activeDashboardFilter?.filter === 'off') dashboardOk = a.monitorStatus === 'Off';
     if (activeDashboardFilter?.filter === 'med-expiring') dashboardOk = monitoringIsOn(a) && medExpiresWithin30(a.medExpire);
-    let alertOk = true;
-    if (alertFilter && alertFilter !== 'all') alertOk = monitoringAlertState(a) === alertFilter;
+    const alertOk = monitoringMatchesAlertFilter(a, alertFilter);
     return matches && statusOk && dashboardOk && alertOk;
   }), [applicants, query, status, activeDashboardFilter, alertFilter]);
 
@@ -707,7 +713,7 @@ function Monitoring({ applicants, setApplicants, company, refresh, dashboardFilt
       <MonitoringAlerts applicants={applicants} activeFilter={alertFilter} onFilterChange={setAlertFilterPersisted} />
       <DashboardFilterBanner filter={activeDashboardFilter} onClear={clearDashboardFilter} />
       <section className="card toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search file number, name, notes..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option>All</option><option>On</option><option>Off</option></select></section>
-      <section className="card table-card"><table><thead><tr><SortHeader label="File #" sortKey="fileNumber" /><SortHeader label="Name" sortKey="name" /><SortHeader label="Order Date" sortKey="orderDate" /><SortHeader label="Monitoring" sortKey="monitorStatus" /><SortHeader label="MVR Status" sortKey="mvrStatus" /><SortHeader label="Med Expire" sortKey="medExpire" /><SortHeader label="Notes" sortKey="notes" /><th></th></tr></thead><tbody>{sorted.map((a) => <ApplicantRow key={a.id} applicant={a} onSave={updateApplicant} />)}</tbody></table>{!sorted.length ? <div className="empty">No applicants found. Import your CSV data into Supabase.</div> : null}</section>
+      <section className="card table-card"><table data-native-monitoring-table="true"><thead><tr><SortHeader label="File #" sortKey="fileNumber" /><SortHeader label="Name" sortKey="name" /><SortHeader label="Order Date" sortKey="orderDate" /><SortHeader label="Monitoring" sortKey="monitorStatus" /><SortHeader label="MVR Status" sortKey="mvrStatus" /><SortHeader label="Med Expire" sortKey="medExpire" /><SortHeader label="Notes" sortKey="notes" /><th></th></tr></thead><tbody>{sorted.map((a) => <ApplicantRow key={a.id} applicant={a} onSave={updateApplicant} />)}</tbody></table>{!sorted.length ? <div className="empty">No applicants found. Import your CSV data into Supabase.</div> : null}</section>
     </>
   );
 }
