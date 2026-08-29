@@ -232,6 +232,9 @@
     if (!isMonitoringContext()) return [];
 
     return Array.from(document.querySelectorAll('table')).filter((table) => {
+      // The current React Monitoring page already provides its own search field.
+      if (table.getAttribute('data-native-monitoring-table') === 'true') return false;
+
       const headers = Array.from(table.querySelectorAll('thead th')).map((th) => normalizeHeader(text(th)));
       return headers.includes('file #') &&
         headers.includes('name') &&
