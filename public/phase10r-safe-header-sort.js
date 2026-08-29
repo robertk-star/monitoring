@@ -25,6 +25,10 @@
 
     const tables = Array.from(document.querySelectorAll('table'));
     return tables.find((table) => {
+      // The current Monitoring table owns its headers and sorting in React.
+      // Rewriting those header nodes here corrupts React's column reconciliation.
+      if (table.getAttribute('data-native-monitoring-table') === 'true') return false;
+
       const headers = Array.from(table.querySelectorAll('thead th')).map((th) => cleanHeaderText(text(th)));
       return headers.includes('file #') &&
         headers.includes('name') &&
