@@ -51,6 +51,9 @@
     if (!isMonitoringContext()) return [];
 
     return Array.from(document.querySelectorAll('table')).filter((table) => {
+      // React owns the current Monitoring table's MVR status header and cells.
+      if (table.getAttribute('data-native-monitoring-table') === 'true') return false;
+
       const headers = Array.from(table.querySelectorAll('thead th')).map((th) => normalize(text(th)));
       return headers.includes('file #') &&
         (headers.includes('mvr status') || headers.includes('mvr') || headers.includes('order mvr')) &&
@@ -482,6 +485,9 @@
   function findMonitoringTables() {
     if (!isMonitoringContext()) return [];
     return Array.from(document.querySelectorAll('table')).filter((table) => {
+      // React owns every header and cell in the current Monitoring table.
+      if (table.getAttribute('data-native-monitoring-table') === 'true') return false;
+
       const headers = Array.from(table.querySelectorAll('thead th')).map((th) => normalize(text(th)));
       return headers.includes('file #') &&
         headers.includes('notes') &&
