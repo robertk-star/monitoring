@@ -635,7 +635,7 @@ async function safetyReports(req: any, res: any, user: any) {
     v.status = 'Consent Needed';
     if (!v.fileNumber && !v.applicantName) return json(res, 400, { status: 'error', message: 'File number or applicant name is required' });
     const writable = await safetyWritableColumns();
-    const placeholders = writable.cols.map((_, i) => `${i + 1}`).join(',');
+    const placeholders = writable.cols.map((_, i) => `$${i + 1}`).join(',');
     const inserted = await query(`insert into safety_reports (${writable.cols.join(',')}) values (${placeholders}) returning *`, reportValuesForFields(v, writable.fields));
     const applicantEmail = await safetyApplicantEmailForReport(companyId, v.fileNumber, body.applicantEmail, body);
     const origin = safetyApplicationOrigin(req);
