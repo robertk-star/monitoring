@@ -1254,7 +1254,7 @@ async function clientDashboard(req: any, res: any, user: any) {
   const monitoringTerminatedFilter = showTerminated ? '' : 'and coalesce("terminated",false)=false';
   const recentApplicants = showMonitoring ? await query(
     `select id, "fileNumber", "applicantName" as name, "orderDate", "monitorStatus", "mvrStatus", "medExpire", "terminated", notes
-     from applicants where "companyId"=$1 ${monitoringTerminatedFilter} order by id desc limit 1000`, [companyId]) : { rows: [] };
+     from applicants where "companyId"=$1 ${monitoringTerminatedFilter} order by id desc limit 10000`, [companyId]) : { rows: [] };
 
   // Terminated page needs a dedicated list so it is not hidden behind the Monitoring page filters.
   // It is still company-scoped and only returned when Terminated Records access is enabled.
