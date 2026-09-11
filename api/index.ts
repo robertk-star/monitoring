@@ -1239,7 +1239,7 @@ async function clientOrderMvr(req: any, res: any, user: any) {
   return json(res, 200, { status: 'ok', alreadyRequested: false, request: requestRow, applicant, notification });
 }
 
-// PHASE12A39_CLIENT_MONITORING_LIMIT: client dashboard returns up to 1000 monitoring records to match admin scale.
+// PHASE12A39_CLIENT_MONITORING_LIMIT: client dashboard returns up to 10000 monitoring records to match admin scale.
 async function clientDashboard(req: any, res: any, user: any) {
   if (req.method !== 'GET') return json(res, 405, { status: 'error', message: 'Method not allowed' });
   if (!requireCompanyScope(user, res)) return;
