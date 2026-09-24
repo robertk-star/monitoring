@@ -792,8 +792,18 @@ async function chooseTemplate(companyId, report, purpose) {
 async function downloadFmcsaPdf(report, companyId) {
   const fileNumber = String(report?.fileNumber || '').trim();
   const reportId = report?.id ? String(report.id).trim() : '';
-  const url = `/api/client-safety-pdf?companyId=${encodeURIComponent(companyId)}${reportId ? `&id=${encodeURIComponent(reportId)}` : `&fileNumber=${encodeURIComponent(fileNumber)}`}`;
-  const response = await fetch(url, { credentials: 'include' });
+  const url = `/api/client-safety-pdf?companyId=${encodeURIComponent(companyId)}${reportId ? `&id=${encodeURIComponent(reportId)}` : `&fileNumber=${encodeURIComponent(fileNumber)}`}&allowDraft=1`;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? window.setTimeout(() => controller.abort(), 20000) : null;
+  let response;
+  try {
+    response = await fetch(url, { credentials: 'include', signal: controller?.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('The FMCSA PDF download timed out. Gmail can still be used; attach a saved document from the report if needed.');
+    throw error;
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
   const contentType = response.headers.get('content-type') || '';
   if (!response.ok) {
     let message = `Could not download FMCSA PDF: ${response.status}`;
@@ -1238,40 +1248,46 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
     const digits = String(recipient || '').replace(/[^0-9]/g, '');
     if (digits.length < 7) throw new Error('Recipient fax number is required.');
 
-    // Open Gmail immediately while still inside the user's click event.
-    // If we wait until after the PDF download finishes, browsers can treat the
-    // Gmail window as an automatic popup and block it.
-    const gmailWindow = window.open('', '_blank');
-
-    const faxEmail = `${digits}@efaxsend.com`;
+    const domain = String(efaxDomain || 'efaxsend.com').replace(/^@+/, '').trim() || 'efaxsend.com';
+    const faxEmail = `${digits}@${domain}`;
     const currentTemplate = templates.find((template) => String(template.id ?? 'default') === String(templateId)) || defaultTemplate('fax');
     const nextSubject = subject || replaceTemplateTokens(currentTemplate.subject, report, { faxNumber: digits });
     const nextBody = body || replaceTemplateTokens(currentTemplate.body, report, { faxNumber: digits });
     const gmailUrl = gmailComposeUrl(faxEmail, nextSubject, nextBody);
 
+    // Open Gmail in the same click. Do not wait on the PDF, or this tab stays
+    // on the "Preparing fax email..." placeholder forever.
+    let gmailWindow = null;
     try {
-      if (gmailWindow) {
-        gmailWindow.document.write('<!doctype html><title>Opening Gmail...</title><body style="font-family:Arial,sans-serif;padding:24px;"><h2>Preparing fax email...</h2><p>Downloading the FMCSA PDF, then Gmail will open here.</p></body>');
-        gmailWindow.document.close();
-      }
-    } catch {}
-
-    const filename = await downloadFmcsaPdf(report, companyId);
-    const draft = `To: ${faxEmail}\nSubject: ${nextSubject}\n\n${nextBody}\n\nAttach downloaded file: ${filename}`;
-    await copyToClipboard(draft);
-
-    if (gmailWindow && !gmailWindow.closed) {
-      gmailWindow.location.href = gmailUrl;
-    } else {
-      const opened = window.open(gmailUrl, '_blank', 'noopener,noreferrer');
-      if (!opened) {
-        await copyToClipboard(gmailUrl);
-        alert(`The FMCSA PDF was downloaded as ${filename}, but your browser blocked the Gmail popup. The Gmail compose URL was copied to your clipboard. Paste it into your browser, then attach the downloaded PDF before sending.`);
-        return;
-      }
+      gmailWindow = window.open(gmailUrl, '_blank', 'noopener,noreferrer');
+    } catch {
+      gmailWindow = null;
+    }
+    if (!gmailWindow) {
+      await copyToClipboard(gmailUrl);
+      alert('Your browser blocked the Gmail window. The Gmail compose URL was copied. Paste it into a new tab, then attach the document before sending.');
     }
 
-    alert(`The FMCSA PDF was downloaded as ${filename}. Gmail opened in a new tab. Attach the downloaded PDF before sending.`);
+    let filename = '';
+    try {
+      if (includeGeneratedPdf) {
+        filename = await downloadFmcsaPdf(report, companyId);
+      }
+      for (const doc of documents.filter((item) => selectedDocumentIds.includes(item.id))) {
+        window.open(`/api/index?path=${encodeURIComponent('safety-reports/documents/file')}&companyId=${encodeURIComponent(companyId)}&id=${encodeURIComponent(doc.id)}`, '_blank', 'noopener,noreferrer');
+      }
+    } catch (error) {
+      alert(error?.message || 'Gmail opened, but the PDF could not be downloaded automatically. Attach a saved document from the report before sending.');
+    }
+
+    const attachNote = filename ? `Attach downloaded file: ${filename}` : 'Attach the uploaded report document before sending.';
+    const draft = `To: ${faxEmail}\nSubject: ${nextSubject}\n\n${nextBody}\n\n${attachNote}`;
+    await copyToClipboard(draft);
+    if (gmailWindow) {
+      alert(filename
+        ? `Gmail opened. The file ${filename} should also download. Attach it in Gmail before sending.`
+        : 'Gmail opened. Attach the document from this file before sending.');
+    }
     setModal(null);
   }
 

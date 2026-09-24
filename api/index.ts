@@ -1660,7 +1660,11 @@ async function clientSafetyPdf(req: any, res: any, user: any) {
 
   const report = result.rows[0];
   if (!report) return json(res, 404, { status: 'error', message: 'Safety report not found for this client' });
-  if (String(report.status || '') !== 'Completed') return json(res, 400, { status: 'error', message: 'Completed PDF is available only when the Safety Performance report status is Completed' });
+  const allowDraft = url.searchParams.get('allowDraft') === '1' || url.searchParams.get('allowDraft') === 'true';
+  const isInternal = isSaffHireInternalUser(user);
+  if (String(report.status || '') !== 'Completed' && !(allowDraft && isInternal)) {
+    return json(res, 400, { status: 'error', message: 'Completed PDF is available only when the Safety Performance report status is Completed' });
+  }
 
   const bytes = await buildCompletedSafetyPdf(report);
   const safeFile = String(report.fileNumber || report.id || 'safety-performance').replace(/[^0-9A-Za-z_-]/g, '') || 'safety-performance';
