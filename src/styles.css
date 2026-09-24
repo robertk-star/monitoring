@@ -138,3 +138,15 @@ td .client-access-grid{grid-template-columns:1fr;min-width:180px}
   border-radius: 14px;
   padding: 10px;
 }
+
+/* Safety Performance report documents and fax attachments */
+.report-documents { margin-top: 10px; border: 1px solid var(--line); background: #f8fafc; border-radius: 12px; padding: 10px 12px; min-width: 240px; }
+.report-documents.compact { margin-top: 8px; padding: 8px 10px; }
+.report-documents-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.report-documents-head strong { font-size: 12px; color: #0f172a; }
+.safety-native-button.upload { border-color: #0f766e; color: #115e59; background: #f0fdfa; }
+.report-documents-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.report-documents-list li { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.report-documents-list .linkish { background: none; border: 0; padding: 0; color: #1d4ed8; font-weight: 800; cursor: pointer; text-align: left; }
+.report-doc-check { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; font-size: 13px; font-weight: 700; color: #334155; }
+.report-doc-check input { width: auto; min-width: auto; }

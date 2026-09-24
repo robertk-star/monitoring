@@ -953,6 +953,127 @@ function ApplicantSignatureStatus({ form, saving, onClear }) {
   );
 }
 
+
+function formatDocSize(bytes) {
+  const size = Number(bytes || 0);
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(new Error('Could not read that file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function ReportDocuments({ report, companyId, compact = false }) {
+  const [documents, setDocuments] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef(null);
+
+  async function loadDocuments() {
+    if (!report?.id) {
+      setDocuments([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await api(`/api/safety-reports/documents?companyId=${encodeURIComponent(companyId)}&reportId=${encodeURIComponent(report.id)}`);
+      setDocuments(data.documents || []);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadDocuments();
+  }, [report?.id, companyId]);
+
+  async function uploadFile(file) {
+    if (!report?.id) {
+      alert('Save the report first, then upload the document.');
+      return;
+    }
+    if (!file) return;
+    if (file.size > 3.5 * 1024 * 1024) {
+      alert('Keep uploaded documents under 3.5 MB.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const contentBase64 = await fileToBase64(file);
+      const data = await api(`/api/safety-reports/documents?companyId=${encodeURIComponent(companyId)}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          reportId: report.id,
+          companyId,
+          fileName: file.name,
+          contentType: file.type,
+          fileSize: file.size,
+          contentBase64,
+        }),
+      });
+      setDocuments((current) => [data.document, ...current.filter((doc) => doc.id !== data.document.id)]);
+    } catch (error) {
+      alert(error.message || 'Could not upload that document.');
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  }
+
+  async function deleteDocument(doc) {
+    if (!window.confirm(`Remove ${doc.fileName} from file #${report.fileNumber || report.id}?`)) return;
+    try {
+      await api(`/api/safety-reports/documents?companyId=${encodeURIComponent(companyId)}&id=${encodeURIComponent(doc.id)}`, { method: 'DELETE' });
+      setDocuments((current) => current.filter((item) => item.id !== doc.id));
+    } catch (error) {
+      alert(error.message || 'Could not delete that document.');
+    }
+  }
+
+  function downloadDocument(doc) {
+    window.open(`/api/index?path=${encodeURIComponent('safety-reports/documents/file')}&companyId=${encodeURIComponent(companyId)}&id=${encodeURIComponent(doc.id)}`, '_blank', 'noopener,noreferrer');
+  }
+
+  return (
+    <div className={compact ? 'report-documents compact' : 'report-documents'}>
+      <div className="report-documents-head">
+        <strong>Documents</strong>
+        <button type="button" className="safety-native-button upload" disabled={!report?.id || uploading} onClick={() => inputRef.current?.click()}>
+          {uploading ? 'Uploading...' : 'Upload Document'}
+        </button>
+        <input ref={inputRef} type="file" hidden accept=".pdf,.tif,.tiff,.jpg,.jpeg,.png,.txt,.doc,.docx,application/pdf,image/tiff,image/jpeg,image/png" onChange={(event) => uploadFile(event.target.files?.[0])} />
+      </div>
+      {!report?.id ? <small>Save the report before uploading a document.</small> : null}
+      {loading ? <small>Loading documents...</small> : null}
+      {!loading && !documents.length ? <small>No documents saved on this file yet.</small> : null}
+      {documents.length ? (
+        <ul className="report-documents-list">
+          {documents.map((doc) => (
+            <li key={doc.id}>
+              <button type="button" className="linkish" onClick={() => downloadDocument(doc)}>{doc.fileName}</button>
+              <span>{formatDocSize(doc.fileSize)}</span>
+              <button type="button" className="icon-btn danger" onClick={() => deleteDocument(doc)} title="Remove document">Remove</button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function SafetyLinks({ report, companyId, company, onReportUpdated }) {
   const [busyAction, setBusyAction] = useState('');
   const [modal, setModal] = useState(null);
@@ -964,6 +1085,12 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
   const [body, setBody] = useState('');
   const [linkModal, setLinkModal] = useState(null);
   const [modalDraftTouched, setModalDraftTouched] = useState(false);
+  const [documents, setDocuments] = useState([]);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
+  const [includeGeneratedPdf, setIncludeGeneratedPdf] = useState(true);
+  const [efaxDomain, setEfaxDomain] = useState(() => {
+    try { return localStorage.getItem('phase12a95EfaxDomain') || 'efaxsend.com'; } catch { return 'efaxsend.com'; }
+  });
 
   useEffect(() => {
     if (!modal && !linkModal) return;
@@ -999,6 +1126,24 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
     setTemplateId(String(next.id ?? 'default'));
     setSubject(replaceTemplateTokens(next.subject, report, templateContext(extra)));
     setBody(replaceTemplateTokens(next.body, report, templateContext(extra)));
+  }
+
+  async function loadReportDocuments() {
+    if (!report?.id) {
+      setDocuments([]);
+      setSelectedDocumentIds([]);
+      return [];
+    }
+    try {
+      const data = await api(`/api/safety-reports/documents?companyId=${encodeURIComponent(companyId)}&reportId=${encodeURIComponent(report.id)}`);
+      const list = data.documents || [];
+      setDocuments(list);
+      setSelectedDocumentIds(list.map((doc) => doc.id));
+      return list;
+    } catch {
+      setDocuments([]);
+      return [];
+    }
   }
 
   async function loadTemplatesForModal(purpose, extra = {}) {
@@ -1059,7 +1204,8 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
 
   async function openFaxGmailModal() {
     const base = defaultTemplate('fax');
-    const initialRecipient = report.prevEmployerFax || report.employerFax || '';
+    const initialRecipient = report.prevEmployerFax || report.employerFax || report.confFax || '';
+    await loadReportDocuments();
     const faxDigits = String(initialRecipient || '').replace(/[^0-9]/g, '');
     setModalDraftTouched(false);
     setRecipient(initialRecipient);
@@ -1129,6 +1275,35 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
     setModal(null);
   }
 
+  async function sendFaxThroughEfax() {
+    const digits = String(recipient || '').replace(/[^0-9]/g, '');
+    if (digits.length < 7) throw new Error('Recipient fax number is required.');
+    if (!includeGeneratedPdf && !selectedDocumentIds.length) throw new Error('Select a saved document or keep the generated FMCSA PDF attached.');
+    const domain = String(efaxDomain || 'efaxsend.com').replace(/^@+/, '').trim() || 'efaxsend.com';
+    try { localStorage.setItem('phase12a95EfaxDomain', domain); } catch {}
+    const currentTemplate = templates.find((template) => String(template.id ?? 'default') === String(templateId)) || defaultTemplate('fax');
+    const nextSubject = subject || replaceTemplateTokens(currentTemplate.subject, report, { faxNumber: digits });
+    const nextBody = body || replaceTemplateTokens(currentTemplate.body, report, { faxNumber: digits });
+    const data = await api(`/api/safety-reports/fax-fmcsa?companyId=${encodeURIComponent(companyId)}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: report.id,
+        fileNumber: report.fileNumber,
+        companyId,
+        faxNumber: digits,
+        recipientName: report.prevEmployerName || '',
+        subject: nextSubject,
+        coverMessage: nextBody,
+        templateId: Number(templateId) || undefined,
+        documentIds: selectedDocumentIds,
+        includeGeneratedPdf,
+        efaxDomain: domain,
+      }),
+    });
+    alert(data.message || `Fax sent to eFax for delivery to ${digits}.`);
+    setModal(null);
+  }
+
   async function markCompleted() {
     if (!window.confirm(`Mark file #${report.fileNumber || ''} as Completed?`)) return;
     const data = await api(`/api/safety-reports?companyId=${encodeURIComponent(companyId)}`, {
@@ -1139,7 +1314,7 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
   }
 
   const disabled = Boolean(busyAction);
-  const modalTitle = modal === 'fax' ? 'Fax FMCSA through Gmail' : 'Client Gmail Draft';
+  const modalTitle = modal === 'fax' ? 'Send Fax through eFax' : 'Client Gmail Draft';
   const modalPrimaryText = modal === 'fax' ? 'Download PDF & Open Gmail' : 'Open Gmail';
   const recipientLabel = modal === 'fax' ? 'Fax Number' : 'Client Email';
   const recipientHelp = modal === 'fax' ? 'Gmail will open to faxnumber@efaxsend.com. Attach the downloaded PDF before sending.' : 'Gmail will open with the selected template. Attach the completed FMCSA PDF if needed.';
@@ -1198,10 +1373,38 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
           <span>Body</span>
           <textarea value={body} onChange={(event) => { setModalDraftTouched(true); setBody(event.target.value); }} rows={8} />
         </label>
+        {modal === 'fax' ? (
+          <>
+            <label className="safety-modal-field">
+              <span>eFax send domain</span>
+              <input value={efaxDomain} onChange={(event) => setEfaxDomain(event.target.value)} placeholder="efaxsend.com" />
+            </label>
+            <div className="safety-modal-field">
+              <span>Documents on this file</span>
+              <label className="report-doc-check">
+                <input type="checkbox" checked={includeGeneratedPdf} onChange={(event) => setIncludeGeneratedPdf(event.target.checked)} />
+                Include generated FMCSA PDF
+              </label>
+              {documents.length ? documents.map((doc) => (
+                <label key={doc.id} className="report-doc-check">
+                  <input
+                    type="checkbox"
+                    checked={selectedDocumentIds.includes(doc.id)}
+                    onChange={(event) => {
+                      setSelectedDocumentIds((current) => event.target.checked ? [...current, doc.id] : current.filter((id) => id !== doc.id));
+                    }}
+                  />
+                  {doc.fileName}
+                </label>
+              )) : <small>No uploaded documents on this file yet. Upload one first, then attach it here.</small>}
+            </div>
+          </>
+        ) : null}
         <p className="safety-modal-note">{recipientHelp}</p>
         <div className="safety-modal-actions">
           <button type="button" className="secondary-btn" onClick={() => setModal(null)}>Cancel</button>
-          <button type="button" className="primary-inline" onClick={() => run(modalPrimaryText, modal === 'fax' ? openFaxGmail : openClientGmail)}>{modalPrimaryText}</button>
+          {modal === 'fax' ? <button type="button" className="secondary-btn" onClick={() => run('Open Gmail fax draft', openFaxGmail)}>Open Gmail Draft</button> : null}
+          <button type="button" className="primary-inline" onClick={() => run(modal === 'fax' ? 'Send Fax' : modalPrimaryText, modal === 'fax' ? sendFaxThroughEfax : openClientGmail)}>{modal === 'fax' ? 'Send Fax' : modalPrimaryText}</button>
         </div>
       </div>
     </div>
@@ -1213,11 +1416,12 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
         <button type="button" className="safety-native-button applicant" disabled={disabled} onClick={() => run('Applicant Link', () => makeResponseLink('applicant'))}>Applicant Link</button>
         <button type="button" className="safety-native-button employer" disabled={disabled} onClick={() => run('Employer Link', () => makeResponseLink('employer'))}>Employer Link</button>
         <button type="button" className="safety-native-button fmcsa" disabled={disabled} onClick={() => run('FMCSA PDF', () => downloadFmcsaPdf(report, companyId))}>FMCSA PDF</button>
-        <button type="button" className="safety-native-button fax" disabled={disabled} onClick={() => run('Fax FMCSA', openFaxGmailModal)}>Fax FMCSA</button>
+        <button type="button" className="safety-native-button fax" disabled={disabled} onClick={() => run('Send Fax', openFaxGmailModal)}>Send Fax</button>
         <button type="button" className="safety-native-button client-gmail" disabled={disabled} onClick={() => run('Client Gmail', openClientGmailModal)}>Client Gmail</button>
         <button type="button" className="safety-native-button mark-completed" disabled={disabled} onClick={() => run('Mark Completed', markCompleted)}>Mark Completed</button>
         {busyAction ? <small>Working on {busyAction}...</small> : null}
       </div>
+      <ReportDocuments report={report} companyId={companyId} compact />
       {linkModalNode}
       {actionModalNode}
     </>
@@ -1470,8 +1674,8 @@ function Safety({ reports, setReports, company, refresh, companyId, dashboardFil
       </section>
       <section className="card wide-card helper-card">
         <h2><Printer size={18} /> Safety Performance Workflow</h2>
-        <p><b>PDF</b> opens a printable report from the Supabase record. Choose “Save as PDF” in the browser print window.</p>
-        <p><b>Email</b> copies a draft, then opens your email client when the previous employer email is saved. Nothing is sent automatically.</p>
+        <p><b>Upload Document</b> stores a PDF or image on that file. It stays attached to the report until you remove it.</p>
+        <p><b>Send Fax</b> uses the existing eFax gateway. Choose the saved document and/or the generated FMCSA PDF, then send. Open Gmail Draft remains available if you want to send the eFax email yourself.</p>
       </section>
     </>
   );
@@ -1513,6 +1717,7 @@ function SafetyForm({ company, companyId, report, onCancel, onSave, onReportUpda
     <>
       <Header title="Safety Performance Submission" subtitle={form.id ? `Editing ${form.fileNumber || form.applicantName}` : 'New report'} actions={<button className="secondary-btn" onClick={onCancel}><ArrowLeft size={16} /> Back</button>} />
       <form className="card form-card" onSubmit={submit}>
+        {form.id ? <FormSection title="Documents on this file"><ReportDocuments report={form} companyId={companyId} /></FormSection> : null}
         <FormSection title="SECTION 1: To be Completed by Prospective Employee">
           <div className="form-grid three"><Field label="Applicant Name"><input value={form.applicantName} onChange={(e) => set('applicantName', e.target.value)} /></Field><Field label="Applicant Email"><input type="email" value={form.applicantEmail || ''} onChange={(e) => set('applicantEmail', e.target.value)} placeholder="applicant@example.com" /></Field><Field label="File Number"><input value={form.fileNumber} onChange={(e) => set('fileNumber', e.target.value)} /></Field></div>
           <div className="form-grid three"><Field label="Status"><select value={form.status} onChange={(e) => set('status', e.target.value)}>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select></Field></div>

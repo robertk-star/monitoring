@@ -1717,23 +1717,46 @@ function defaultFaxCoverMessage(report: any, recipientName?: string) {
   return parts.join('\n').trim();
 }
 
-async function sendViaResendToEfax(params: { toFaxEmail: string; fromEmail: string; replyToEmail?: string; subject: string; text: string; filename: string; pdfBase64: string; }) {
+function normalizeFaxAttachments(params: any) {
+  const attachments: { filename: string; contentBase64: string; contentType: string }[] = [];
+  const incoming = Array.isArray(params?.attachments) ? params.attachments : [];
+  for (const item of incoming) {
+    const filename = String(item?.filename || item?.fileName || '').trim();
+    const contentBase64 = String(item?.contentBase64 || item?.content || item?.pdfBase64 || '').replace(/^data:[^;]+;base64,/, '').trim();
+    if (!filename || !contentBase64) continue;
+    attachments.push({
+      filename,
+      contentBase64,
+      contentType: String(item?.contentType || item?.mimeType || 'application/pdf').trim() || 'application/pdf',
+    });
+  }
+  if (!attachments.length && params?.filename && params?.pdfBase64) {
+    attachments.push({
+      filename: String(params.filename),
+      contentBase64: String(params.pdfBase64).replace(/^data:[^;]+;base64,/, ''),
+      contentType: 'application/pdf',
+    });
+  }
+  return attachments;
+}
+
+async function sendViaResendToEfax(params: { toFaxEmail: string; fromEmail: string; replyToEmail?: string; subject: string; text: string; filename?: string; pdfBase64?: string; attachments?: any[]; }) {
   const apiKey = String(process.env.RESEND_API_KEY || '').trim();
   if (!apiKey) throw new Error('RESEND_API_KEY is missing in Vercel Environment Variables');
   if (!params.fromEmail || !params.fromEmail.includes('@')) throw new Error('EMAIL_FROM or SAFETY_FROM_EMAIL is missing in Vercel Environment Variables');
   if (!params.toFaxEmail || !params.toFaxEmail.includes('@')) throw new Error('eFax destination email could not be created from the fax number');
+  const attachments = normalizeFaxAttachments(params);
+  if (!attachments.length) throw new Error('At least one document must be attached to send a fax');
 
   const payload: any = {
     from: params.fromEmail,
     to: [params.toFaxEmail],
     subject: params.subject || 'FMCSA Safety Performance Report',
-    text: params.text || 'Please see the attached FMCSA Safety Performance report.',
-    attachments: [
-      {
-        filename: params.filename,
-        content: params.pdfBase64,
-      }
-    ]
+    text: params.text || 'Please see the attached document.',
+    attachments: attachments.map((item) => ({
+      filename: item.filename,
+      content: item.contentBase64,
+    })),
   };
   if (params.replyToEmail && params.replyToEmail.includes('@')) payload.reply_to = params.replyToEmail;
 
@@ -1795,7 +1818,7 @@ function faxSmtpConfigured() {
   return Boolean(faxSmtpPass() || process.env.FAX_SMTP_HOST || process.env.FAX_SMTP_USER || process.env.FAX_FROM);
 }
 
-async function sendViaSmtpToEfax(params: { toFaxEmail: string; fromEmail: string; replyToEmail?: string; subject: string; text: string; filename: string; pdfBase64: string; }) {
+async function sendViaSmtpToEfax(params: { toFaxEmail: string; fromEmail: string; replyToEmail?: string; subject: string; text: string; filename?: string; pdfBase64?: string; attachments?: any[]; }) {
   const smtpUser = faxSmtpUser();
   const smtpPass = faxSmtpPass();
   const fromEmail = String(params.fromEmail || faxFromEmail()).trim();
@@ -1826,15 +1849,13 @@ async function sendViaSmtpToEfax(params: { toFaxEmail: string; fromEmail: string
       from: fromEmail,
       to: params.toFaxEmail,
       subject: params.subject || 'FMCSA Safety Performance Report',
-      text: params.text || 'Please see the attached FMCSA Safety Performance report.',
+      text: params.text || 'Please see the attached document.',
       replyTo: params.replyToEmail && params.replyToEmail.includes('@') ? params.replyToEmail : undefined,
-      attachments: [
-        {
-          filename: params.filename,
-          content: Buffer.from(params.pdfBase64, 'base64'),
-          contentType: 'application/pdf',
-        },
-      ],
+      attachments: normalizeFaxAttachments(params).map((item) => ({
+        filename: item.filename,
+        content: Buffer.from(item.contentBase64, 'base64'),
+        contentType: item.contentType || 'application/pdf',
+      })),
     });
     return {
       id: info?.messageId || null,
@@ -1852,6 +1873,146 @@ async function sendViaSmtpToEfax(params: { toFaxEmail: string; fromEmail: string
     throw new Error(`Gmail SMTP/eFax email send failed: ${errorMessage(error)}`);
   }
 }
+
+const SAFETY_DOC_MAX_BYTES = 3_500_000;
+const SAFETY_DOC_ALLOWED_TYPES = new Set([
+  'application/pdf',
+  'image/tiff',
+  'image/tif',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'text/plain',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
+
+let safetyReportDocumentsTableReady = false;
+async function ensureSafetyReportDocumentsTable() {
+  if (safetyReportDocumentsTableReady) return;
+  await query(`
+    create table if not exists safety_report_documents (
+      id serial primary key,
+      "companyId" integer not null references companies(id) on delete cascade,
+      "reportId" integer not null references safety_reports(id) on delete cascade,
+      "fileName" text not null,
+      "contentType" text not null default 'application/pdf',
+      "fileSize" integer not null default 0,
+      "contentBase64" text not null,
+      "uploadedBy" integer references local_users(id) on delete set null,
+      "createdAt" timestamptz not null default now()
+    )
+  `);
+  await query('create index if not exists safety_report_documents_report_idx on safety_report_documents ("companyId", "reportId")');
+  safetyReportDocumentsTableReady = true;
+}
+
+function guessContentType(fileName: string, provided?: string) {
+  const given = String(provided || '').trim().toLowerCase();
+  if (given) return given;
+  const lower = String(fileName || '').toLowerCase();
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.tif') || lower.endsWith('.tiff')) return 'image/tiff';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.txt')) return 'text/plain';
+  if (lower.endsWith('.doc')) return 'application/msword';
+  if (lower.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  return 'application/octet-stream';
+}
+
+function documentPublicRow(row: any) {
+  return {
+    id: row.id,
+    reportId: row.reportId,
+    companyId: row.companyId,
+    fileName: row.fileName,
+    contentType: row.contentType,
+    fileSize: row.fileSize,
+    uploadedBy: row.uploadedBy,
+    createdAt: row.createdAt,
+  };
+}
+
+async function safetyReportsDocuments(req: any, res: any, user: any) {
+  if (!requireCompanyScope(user, res)) return;
+  await ensureSafetyReportDocumentsTable();
+  const url = new URL(req.url || '/', 'https://local.test');
+  const companyId = Number(url.searchParams.get('companyId') || requestedCompanyId(req, user));
+
+  if (req.method === 'GET') {
+    const reportId = Number(url.searchParams.get('reportId') || url.searchParams.get('id') || 0);
+    if (!reportId) return json(res, 400, { status: 'error', message: 'reportId is required' });
+    const report = await query('select id from safety_reports where id=$1 and "companyId"=$2 limit 1', [reportId, companyId]);
+    if (!report.rows[0]) return json(res, 404, { status: 'error', message: 'Safety Performance report not found' });
+    const rows = await query(
+      'select id, "companyId", "reportId", "fileName", "contentType", "fileSize", "uploadedBy", "createdAt" from safety_report_documents where "companyId"=$1 and "reportId"=$2 order by id desc',
+      [companyId, reportId]
+    );
+    return json(res, 200, { status: 'ok', documents: rows.rows.map(documentPublicRow) });
+  }
+
+  if (req.method === 'POST') {
+    const body = await readBody(req);
+    const reportId = Number(body.reportId || body.id || 0);
+    if (!reportId) return json(res, 400, { status: 'error', message: 'reportId is required' });
+    const report = await query('select id, "fileNumber" from safety_reports where id=$1 and "companyId"=$2 limit 1', [reportId, companyId]);
+    if (!report.rows[0]) return json(res, 404, { status: 'error', message: 'Safety Performance report not found' });
+    const fileName = String(body.fileName || body.filename || 'document.pdf').replace(/[\\/]/g, '').trim() || 'document.pdf';
+    const contentType = guessContentType(fileName, body.contentType);
+    if (!SAFETY_DOC_ALLOWED_TYPES.has(contentType)) {
+      return json(res, 400, { status: 'error', message: 'That file type cannot be stored on a Safety Performance report. Use PDF, TIFF, JPG, PNG, TXT, DOC, or DOCX.' });
+    }
+    const contentBase64 = String(body.contentBase64 || body.content || '').replace(/^data:[^;]+;base64,/, '').trim();
+    if (!contentBase64) return json(res, 400, { status: 'error', message: 'Document content is required' });
+    let fileSize = Number(body.fileSize || 0);
+    try {
+      fileSize = Buffer.from(contentBase64, 'base64').length;
+    } catch {
+      return json(res, 400, { status: 'error', message: 'Document content is not valid base64' });
+    }
+    if (!fileSize) return json(res, 400, { status: 'error', message: 'Document is empty' });
+    if (fileSize > SAFETY_DOC_MAX_BYTES) return json(res, 400, { status: 'error', message: 'Document is too large. Keep uploads under 3.5 MB.' });
+    const inserted = await query(
+      'insert into safety_report_documents ("companyId", "reportId", "fileName", "contentType", "fileSize", "contentBase64", "uploadedBy") values ($1,$2,$3,$4,$5,$6,$7) returning id, "companyId", "reportId", "fileName", "contentType", "fileSize", "uploadedBy", "createdAt"',
+      [companyId, reportId, fileName, contentType, fileSize, contentBase64, user?.id || null]
+    );
+    return json(res, 200, { status: 'ok', document: documentPublicRow(inserted.rows[0]) });
+  }
+
+  if (req.method === 'DELETE') {
+    const id = Number(url.searchParams.get('id') || 0);
+    if (!id) return json(res, 400, { status: 'error', message: 'Document id is required' });
+    const deleted = await query('delete from safety_report_documents where id=$1 and "companyId"=$2 returning id', [id, companyId]);
+    if (!deleted.rows[0]) return json(res, 404, { status: 'error', message: 'Document not found' });
+    return json(res, 200, { status: 'ok', deleted: true, id });
+  }
+
+  return json(res, 405, { status: 'error', message: 'Method not allowed' });
+}
+
+async function safetyReportsDocumentFile(req: any, res: any, user: any) {
+  if (req.method !== 'GET') return json(res, 405, { status: 'error', message: 'Method not allowed' });
+  if (!requireCompanyScope(user, res)) return;
+  await ensureSafetyReportDocumentsTable();
+  const url = new URL(req.url || '/', 'https://local.test');
+  const companyId = Number(url.searchParams.get('companyId') || requestedCompanyId(req, user));
+  const id = Number(url.searchParams.get('id') || 0);
+  if (!id) return json(res, 400, { status: 'error', message: 'Document id is required' });
+  const result = await query(
+    'select id, "fileName", "contentType", "contentBase64" from safety_report_documents where id=$1 and "companyId"=$2 limit 1',
+    [id, companyId]
+  );
+  const row = result.rows[0];
+  if (!row) return json(res, 404, { status: 'error', message: 'Document not found' });
+  const bytes = Buffer.from(String(row.contentBase64 || ''), 'base64');
+  res.statusCode = 200;
+  res.setHeader('Content-Type', row.contentType || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${String(row.fileName || 'document').replace(/"/g, '')}"`);
+  res.setHeader('Content-Length', String(bytes.length));
+  res.end(bytes);
+}
+
 async function safetyReportsFaxFmcsaInner(req: any, res: any, user: any) {
   if (req.method !== 'POST') return json(res, 405, { status: 'error', message: 'Method not allowed' });
   if (!requireCompanyScope(user, res)) return;
@@ -1862,7 +2023,7 @@ async function safetyReportsFaxFmcsaInner(req: any, res: any, user: any) {
   const fileNumber = String(body.fileNumber || '').trim();
   const recipientFaxDigits = faxDigits(body.faxNumber || body.recipientFaxNumber || body.prevEmployerFax);
   const recipientName = String(body.recipientName || '').trim();
-  const domain = faxDomain();
+  const domain = String(body.efaxDomain || body.domain || faxDomain()).replace(/^@+/, '').trim().toLowerCase() || faxDomain();
   const toFaxEmail = `${recipientFaxDigits}@${domain}`;
 
   let result;
@@ -1903,7 +2064,53 @@ async function safetyReportsFaxFmcsaInner(req: any, res: any, user: any) {
   const fromEmail = faxFromEmail();
   const replyToEmail = faxReplyToEmail();
 
-  const pdfBase64 = Buffer.from(bytes).toString('base64');
+  const includeGeneratedPdf = body.includeGeneratedPdf !== false && body.attachGeneratedPdf !== false;
+  const faxAttachments: any[] = [];
+  if (includeGeneratedPdf) {
+    faxAttachments.push({
+      filename,
+      contentBase64: Buffer.from(bytes).toString('base64'),
+      contentType: 'application/pdf',
+    });
+  }
+
+  const requestedDocumentIds = Array.isArray(body.documentIds)
+    ? body.documentIds.map((value: any) => Number(value)).filter((value: number) => Number.isFinite(value) && value > 0)
+    : [];
+  if (requestedDocumentIds.length) {
+    await ensureSafetyReportDocumentsTable();
+    const stored = await query(
+      'select id, "fileName", "contentType", "contentBase64" from safety_report_documents where "companyId"=$1 and "reportId"=$2 and id = any($3::int[]) order by id asc',
+      [companyId, report.id, requestedDocumentIds]
+    );
+    if (stored.rows.length !== requestedDocumentIds.length) {
+      return json(res, 400, { status: 'error', message: 'One or more selected documents were not found on this report' });
+    }
+    for (const row of stored.rows) {
+      faxAttachments.push({
+        filename: row.fileName,
+        contentBase64: row.contentBase64,
+        contentType: row.contentType || 'application/pdf',
+      });
+    }
+  }
+
+  const extraAttachments = Array.isArray(body.attachments) ? body.attachments : [];
+  for (const item of extraAttachments) {
+    const extraName = String(item?.fileName || item?.filename || '').trim();
+    const extraContent = String(item?.contentBase64 || item?.content || '').replace(/^data:[^;]+;base64,/, '').trim();
+    if (!extraName || !extraContent) continue;
+    faxAttachments.push({
+      filename: extraName,
+      contentBase64: extraContent,
+      contentType: String(item?.contentType || 'application/pdf'),
+    });
+  }
+
+  if (!faxAttachments.length) {
+    return json(res, 400, { status: 'error', message: 'Select at least one document to fax' });
+  }
+
   const usingSmtp = faxSmtpConfigured();
   const emailResult = usingSmtp
     ? await sendViaSmtpToEfax({
@@ -1912,8 +2119,7 @@ async function safetyReportsFaxFmcsaInner(req: any, res: any, user: any) {
         replyToEmail,
         subject,
         text,
-        filename,
-        pdfBase64
+        attachments: faxAttachments,
       })
     : await sendViaResendToEfax({
         toFaxEmail,
@@ -1921,8 +2127,7 @@ async function safetyReportsFaxFmcsaInner(req: any, res: any, user: any) {
         replyToEmail,
         subject,
         text,
-        filename,
-        pdfBase64
+        attachments: faxAttachments,
       });
   const emailProvider = usingSmtp ? 'gmail_smtp' : 'resend';
 
@@ -1944,9 +2149,10 @@ async function safetyReportsFaxFmcsaInner(req: any, res: any, user: any) {
     reportId: report.id,
     fileNumber: report.fileNumber || null,
     applicantName: report.applicantName || null,
-    pdfAttached: true,
-    attachmentFilename: filename,
-    attachmentContentType: 'application/pdf',
+    pdfAttached: includeGeneratedPdf,
+    attachmentFilename: faxAttachments.map((item) => item.filename).join(', '),
+    attachmentContentType: faxAttachments.map((item) => item.contentType).join(', '),
+    attachedDocumentCount: faxAttachments.length,
     note: usingSmtp ? 'This confirms the app sent the fax email through Gmail SMTP to the eFax gateway. Final fax delivery is confirmed separately by eFax.' : 'This confirms the app sent the email to the eFax gateway. Final fax delivery is confirmed separately by eFax.'
   };
 
@@ -5765,7 +5971,7 @@ export default async function handler(req: any, res: any) {
         'tazworks-mvr-test', 'monitoring-on-off', 'monitoring-on-off/clear', 'monitoring-on-off/remove', 'monitoring-on-off/repair', 'monitoring-on-off/update'
       ]);
       const safetyRoutes = new Set([
-        'safety-reports', 'safety-reports/live-pull', 'safety-reports/fax-fmcsa', 'safety-reports/live-discover',
+        'safety-reports', 'safety-reports/live-pull', 'safety-reports/fax-fmcsa', 'safety-reports/documents', 'safety-reports/documents/file', 'safety-reports/live-discover',
         'safety-response-link', 'safety-response-diagnostics', 'import-safety-reports', 'email-templates',
         'safety-report-notes', 'client-safety-pdf'
       ]);
@@ -5778,6 +5984,8 @@ export default async function handler(req: any, res: any) {
     if (route === 'safety-reports') return safetyReports(req, res, user);
     if (route === 'safety-reports/live-pull') return safetyReportsLivePull(req, res, user);
     if (route === 'safety-reports/fax-fmcsa') return safetyReportsFaxFmcsa(req, res, user);
+    if (route === 'safety-reports/documents') return safetyReportsDocuments(req, res, user);
+    if (route === 'safety-reports/documents/file') return safetyReportsDocumentFile(req, res, user);
     if (route === 'safety-reports/live-discover') return safetyReportsLiveDiscover(req, res, user);
     if (route === 'safety-response-link') return safetyResponseLink(req, res, user);
     if (route === 'safety-response-diagnostics') return safetyResponseDiagnostics(req, res, user);

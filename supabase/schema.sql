@@ -100,3 +100,18 @@ create table if not exists notification_emails (
   "createdAt" timestamptz not null default now(),
   "updatedAt" timestamptz not null default now()
 );
+
+
+create table if not exists safety_report_documents (
+  id serial primary key,
+  "companyId" integer not null references companies(id) on delete cascade,
+  "reportId" integer not null references safety_reports(id) on delete cascade,
+  "fileName" text not null,
+  "contentType" text not null default 'application/pdf',
+  "fileSize" integer not null default 0,
+  "contentBase64" text not null,
+  "uploadedBy" integer references local_users(id) on delete set null,
+  "createdAt" timestamptz not null default now()
+);
+
+create index if not exists safety_report_documents_report_idx on safety_report_documents ("companyId", "reportId");
