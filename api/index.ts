@@ -1745,7 +1745,7 @@ function normalizeFaxAttachments(params: any) {
 }
 
 async function sendViaResendToEfax(params: { toFaxEmail: string; fromEmail: string; replyToEmail?: string; subject: string; text: string; filename?: string; pdfBase64?: string; attachments?: any[]; }) {
-  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const apiKey = String(process.env.RESEND_API_KEY || process.env.FAX_RESEND_API_KEY || process.env.EFAX_RESEND_API_KEY || process.env.SAFETY_RESEND_API_KEY || '').trim();
   if (!apiKey) throw new Error('RESEND_API_KEY is missing in Vercel Environment Variables');
   if (!params.fromEmail || !params.fromEmail.includes('@')) throw new Error('EMAIL_FROM or SAFETY_FROM_EMAIL is missing in Vercel Environment Variables');
   if (!params.toFaxEmail || !params.toFaxEmail.includes('@')) throw new Error('eFax destination email could not be created from the fax number');
@@ -1819,7 +1819,42 @@ function faxSmtpSecure() {
 }
 
 function faxSmtpConfigured() {
-  return Boolean(faxSmtpPass() || process.env.FAX_SMTP_HOST || process.env.FAX_SMTP_USER || process.env.FAX_FROM);
+  return Boolean(faxSmtpUser() && faxSmtpUser().includes('@') && faxSmtpPass());
+}
+
+function resendConfigured() {
+  return Boolean(String(process.env.RESEND_API_KEY || process.env.FAX_RESEND_API_KEY || process.env.EFAX_RESEND_API_KEY || process.env.SAFETY_RESEND_API_KEY || '').trim());
+}
+
+function isSmtpAuthError(error: any) {
+  const message = errorMessage(error).toLowerCase();
+  return message.includes('535') || message.includes('invalid login') || message.includes('username and password not accepted') || message.includes('eauth') || message.includes('badcredentials');
+}
+
+async function sendEmailWithAttachments(params: { toEmail: string; fromEmail: string; replyToEmail?: string; subject: string; text: string; attachments: any[]; }) {
+  const payload = {
+    toFaxEmail: params.toEmail,
+    fromEmail: params.fromEmail,
+    replyToEmail: params.replyToEmail,
+    subject: params.subject,
+    text: params.text,
+    attachments: params.attachments,
+  };
+  const smtpReady = faxSmtpConfigured();
+  const resendReady = resendConfigured();
+  if (smtpReady) {
+    try {
+      const result = await sendViaSmtpToEfax(payload);
+      return { ...result, emailProvider: 'gmail_smtp' };
+    } catch (error: any) {
+      if (!resendReady || !isSmtpAuthError(error)) throw error;
+    }
+  }
+  if (resendReady) {
+    const result = await sendViaResendToEfax(payload);
+    return { ...result, emailProvider: 'resend' };
+  }
+  throw new Error('Gmail SMTP login was rejected. Google no longer accepts a normal Gmail password here. Create a Gmail App Password and set FAX_SMTP_USER plus FAX_SMTP_PASS in Vercel, or add RESEND_API_KEY.');
 }
 
 async function sendViaSmtpToEfax(params: { toFaxEmail: string; fromEmail: string; replyToEmail?: string; subject: string; text: string; filename?: string; pdfBase64?: string; attachments?: any[]; }) {
@@ -2115,25 +2150,15 @@ async function safetyReportsFaxFmcsaInner(req: any, res: any, user: any) {
     return json(res, 400, { status: 'error', message: 'Select at least one document to fax' });
   }
 
-  const usingSmtp = faxSmtpConfigured();
-  const emailResult = usingSmtp
-    ? await sendViaSmtpToEfax({
-        toFaxEmail,
-        fromEmail,
-        replyToEmail,
-        subject,
-        text,
-        attachments: faxAttachments,
-      })
-    : await sendViaResendToEfax({
-        toFaxEmail,
-        fromEmail,
-        replyToEmail,
-        subject,
-        text,
-        attachments: faxAttachments,
-      });
-  const emailProvider = usingSmtp ? 'gmail_smtp' : 'resend';
+  const emailResult = await sendEmailWithAttachments({
+    toEmail: toFaxEmail,
+    fromEmail,
+    replyToEmail,
+    subject,
+    text,
+    attachments: faxAttachments,
+  });
+  const emailProvider = emailResult.emailProvider || (faxSmtpConfigured() ? 'gmail_smtp' : 'resend');
 
   const faxDebug = {
     status: 'sent_to_efax_email_gateway',
@@ -2266,10 +2291,14 @@ async function safetyReportsSendGmailInner(req: any, res: any, user: any) {
     return json(res, 400, { status: 'error', message: 'Select at least one uploaded document to attach' });
   }
 
-  const usingSmtp = faxSmtpConfigured();
-  const emailResult = usingSmtp
-    ? await sendViaSmtpToEfax({ toFaxEmail: toEmail, fromEmail, replyToEmail, subject, text, attachments })
-    : await sendViaResendToEfax({ toFaxEmail: toEmail, fromEmail, replyToEmail, subject, text, attachments });
+  const emailResult = await sendEmailWithAttachments({
+    toEmail,
+    fromEmail,
+    replyToEmail,
+    subject,
+    text,
+    attachments,
+  });
 
   return json(res, 200, {
     status: 'ok',
@@ -2279,7 +2308,7 @@ async function safetyReportsSendGmailInner(req: any, res: any, user: any) {
     fromEmail,
     subject,
     attachmentNames: attachments.map((item) => item.filename),
-    emailProvider: usingSmtp ? 'gmail_smtp' : 'resend',
+    emailProvider: emailResult.emailProvider || 'resend',
     emailProviderId: emailResult?.id || emailResult?.messageId || null,
   });
 }
