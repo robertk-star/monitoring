@@ -1199,6 +1199,7 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
   async function openClientGmailModal() {
     const base = defaultTemplate('client');
     const initialRecipient = report.employerEmail || company?.email || '';
+    await loadReportDocuments();
     setModalDraftTouched(false);
     setRecipient(initialRecipient);
     setTemplates([base]);
@@ -1241,6 +1242,41 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
     const draft = `To: ${to || '[enter client email]'}\nSubject: ${subject}\n\n${body}`;
     await copyToClipboard(draft);
     window.open(gmailComposeUrl(to, subject, body), '_blank', 'noopener,noreferrer');
+    setModal(null);
+  }
+
+  function gmailRecipient() {
+    const raw = String(recipient || '').trim();
+    if (raw.includes('@')) return raw;
+    if (modal === 'fax') {
+      const digits = raw.replace(/[^0-9]/g, '');
+      const domain = String(efaxDomain || 'efaxsend.com').replace(/^@+/, '').trim() || 'efaxsend.com';
+      if (digits.length >= 7) return `${digits}@${domain}`;
+    }
+    return report.prevEmployerEmail || report.employerEmail || '';
+  }
+
+  async function sendGmailWithAttachments() {
+    const to = gmailRecipient();
+    if (!to || !to.includes('@')) throw new Error('Enter the Gmail recipient email address.');
+    if (!includeGeneratedPdf && !selectedDocumentIds.length) throw new Error('Select the uploaded document you want attached.');
+    const data = await api(`/api/safety-reports/send-gmail?companyId=${encodeURIComponent(companyId)}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: report.id,
+        fileNumber: report.fileNumber,
+        companyId,
+        to,
+        recipientName: report.prevEmployerName || report.employerName || '',
+        subject,
+        body,
+        documentIds: selectedDocumentIds,
+        includeGeneratedPdf: modal === 'fax' ? includeGeneratedPdf : false,
+      }),
+    });
+    const names = (data.attachmentNames || []).join(', ');
+    alert(data.message || `Gmail sent to ${to}${names ? ` with ${names}` : ''}.`);
+    window.open(`https://mail.google.com/mail/u/0/#search/in%3Asent+${encodeURIComponent(to)}`, '_blank', 'noopener,noreferrer');
     setModal(null);
   }
 
@@ -1333,7 +1369,7 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
   const modalTitle = modal === 'fax' ? 'Send Fax through eFax' : 'Client Gmail Draft';
   const modalPrimaryText = modal === 'fax' ? 'Download PDF & Open Gmail' : 'Open Gmail';
   const recipientLabel = modal === 'fax' ? 'Fax Number' : 'Client Email';
-  const recipientHelp = modal === 'fax' ? 'Gmail will open to faxnumber@efaxsend.com. Attach the downloaded PDF before sending.' : 'Gmail will open with the selected template. Attach the completed FMCSA PDF if needed.';
+  const recipientHelp = modal === 'fax' ? 'Send Fax delivers through eFax. Send Gmail sends the selected uploaded document through your Gmail account as an attachment.' : 'Send Gmail attaches the selected uploaded document and sends it through your Gmail account. Opening a blank Gmail window cannot attach files.';
 
   const linkModalNode = linkModal ? (() => {
     const draft = buildSafetyResponseLinkDraft(linkModal.url, report, linkModal.role);
@@ -1390,37 +1426,37 @@ function SafetyLinks({ report, companyId, company, onReportUpdated }) {
           <textarea value={body} onChange={(event) => { setModalDraftTouched(true); setBody(event.target.value); }} rows={8} />
         </label>
         {modal === 'fax' ? (
-          <>
-            <label className="safety-modal-field">
-              <span>eFax send domain</span>
-              <input value={efaxDomain} onChange={(event) => setEfaxDomain(event.target.value)} placeholder="efaxsend.com" />
-            </label>
-            <div className="safety-modal-field">
-              <span>Documents on this file</span>
-              <label className="report-doc-check">
-                <input type="checkbox" checked={includeGeneratedPdf} onChange={(event) => setIncludeGeneratedPdf(event.target.checked)} />
-                Include generated FMCSA PDF
-              </label>
-              {documents.length ? documents.map((doc) => (
-                <label key={doc.id} className="report-doc-check">
-                  <input
-                    type="checkbox"
-                    checked={selectedDocumentIds.includes(doc.id)}
-                    onChange={(event) => {
-                      setSelectedDocumentIds((current) => event.target.checked ? [...current, doc.id] : current.filter((id) => id !== doc.id));
-                    }}
-                  />
-                  {doc.fileName}
-                </label>
-              )) : <small>No uploaded documents on this file yet. Upload one first, then attach it here.</small>}
-            </div>
-          </>
+          <label className="safety-modal-field">
+            <span>eFax send domain</span>
+            <input value={efaxDomain} onChange={(event) => setEfaxDomain(event.target.value)} placeholder="efaxsend.com" />
+          </label>
         ) : null}
+        <div className="safety-modal-field">
+          <span>Attach documents from this file</span>
+          {modal === 'fax' ? (
+            <label className="report-doc-check">
+              <input type="checkbox" checked={includeGeneratedPdf} onChange={(event) => setIncludeGeneratedPdf(event.target.checked)} />
+              Include generated FMCSA PDF
+            </label>
+          ) : null}
+          {documents.length ? documents.map((doc) => (
+            <label key={doc.id} className="report-doc-check">
+              <input
+                type="checkbox"
+                checked={selectedDocumentIds.includes(doc.id)}
+                onChange={(event) => {
+                  setSelectedDocumentIds((current) => event.target.checked ? [...current, doc.id] : current.filter((id) => id !== doc.id));
+                }}
+              />
+              {doc.fileName}
+            </label>
+          )) : <small>No uploaded documents on this file yet. Upload one first, then attach it here.</small>}
+        </div>
         <p className="safety-modal-note">{recipientHelp}</p>
         <div className="safety-modal-actions">
           <button type="button" className="secondary-btn" onClick={() => setModal(null)}>Cancel</button>
-          {modal === 'fax' ? <button type="button" className="secondary-btn" onClick={() => run('Open Gmail fax draft', openFaxGmail)}>Open Gmail Draft</button> : null}
-          <button type="button" className="primary-inline" onClick={() => run(modal === 'fax' ? 'Send Fax' : modalPrimaryText, modal === 'fax' ? sendFaxThroughEfax : openClientGmail)}>{modal === 'fax' ? 'Send Fax' : modalPrimaryText}</button>
+          {modal === 'fax' ? <button type="button" className="secondary-btn" onClick={() => run('Send Gmail', sendGmailWithAttachments)}>Send Gmail</button> : null}
+          <button type="button" className="primary-inline" onClick={() => run(modal === 'fax' ? 'Send Fax' : 'Send Gmail', modal === 'fax' ? sendFaxThroughEfax : sendGmailWithAttachments)}>{modal === 'fax' ? 'Send Fax' : 'Send Gmail'}</button>
         </div>
       </div>
     </div>

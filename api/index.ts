@@ -2197,6 +2197,105 @@ async function safetyReportsFaxFmcsa(req: any, res: any, user: any) {
     });
   }
 }
+
+async function safetyReportsSendGmailInner(req: any, res: any, user: any) {
+  if (req.method !== 'POST') return json(res, 405, { status: 'error', message: 'Method not allowed' });
+  if (!requireCompanyScope(user, res)) return;
+
+  const body = await readBody(req);
+  const companyId = Number(body.companyId || requestedCompanyId(req, user));
+  const id = Number(body.id || 0);
+  const fileNumber = String(body.fileNumber || '').trim();
+  const toEmail = String(body.to || body.email || body.recipientEmail || '').trim();
+  if (!toEmail || !toEmail.includes('@')) {
+    return json(res, 400, { status: 'error', message: 'A recipient email address is required to send Gmail with attachments' });
+  }
+
+  let result;
+  if (id) {
+    result = await query('select * from safety_reports where id=$1 and "companyId"=$2 limit 1', [id, companyId]);
+  } else if (fileNumber) {
+    result = await query('select * from safety_reports where "companyId"=$1 and "fileNumber"=$2 order by id desc limit 1', [companyId, fileNumber]);
+  } else {
+    return json(res, 400, { status: 'error', message: 'Report id or file number is required' });
+  }
+  const report = result.rows[0];
+  if (!report) return json(res, 404, { status: 'error', message: 'Safety Performance report not found' });
+
+  const recipientName = String(body.recipientName || report.prevEmployerName || report.employerName || '').trim();
+  const defaultSubject = `Safety Performance Report${report.fileNumber ? ` - File #${report.fileNumber}` : ''}`;
+  const subject = String(body.subject || body.emailSubject || defaultSubject).trim() || defaultSubject;
+  const text = String(body.coverMessage || body.body || `Please see the attached document for ${report.applicantName || 'the applicant'}.`).trim();
+  const fromEmail = faxFromEmail();
+  const replyToEmail = faxReplyToEmail();
+
+  const includeGeneratedPdf = body.includeGeneratedPdf === true || body.attachGeneratedPdf === true;
+  const attachments: any[] = [];
+  if (includeGeneratedPdf) {
+    const bytes = await buildCompletedSafetyPdf(report);
+    const safeFile = String(report.fileNumber || report.id || 'safety-performance').replace(/[^0-9A-Za-z_-]/g, '') || 'safety-performance';
+    attachments.push({
+      filename: `fmcsa-safety-performance-${safeFile}.pdf`,
+      contentBase64: Buffer.from(bytes).toString('base64'),
+      contentType: 'application/pdf',
+    });
+  }
+
+  const requestedDocumentIds = Array.isArray(body.documentIds)
+    ? body.documentIds.map((value: any) => Number(value)).filter((value: number) => Number.isFinite(value) && value > 0)
+    : [];
+  if (requestedDocumentIds.length) {
+    await ensureSafetyReportDocumentsTable();
+    const stored = await query(
+      'select id, "fileName", "contentType", "contentBase64" from safety_report_documents where "companyId"=$1 and "reportId"=$2 and id = any($3::int[]) order by id asc',
+      [companyId, report.id, requestedDocumentIds]
+    );
+    if (stored.rows.length !== requestedDocumentIds.length) {
+      return json(res, 400, { status: 'error', message: 'One or more selected documents were not found on this report' });
+    }
+    for (const row of stored.rows) {
+      attachments.push({
+        filename: row.fileName,
+        contentBase64: row.contentBase64,
+        contentType: row.contentType || 'application/pdf',
+      });
+    }
+  }
+
+  if (!attachments.length) {
+    return json(res, 400, { status: 'error', message: 'Select at least one uploaded document to attach' });
+  }
+
+  const usingSmtp = faxSmtpConfigured();
+  const emailResult = usingSmtp
+    ? await sendViaSmtpToEfax({ toFaxEmail: toEmail, fromEmail, replyToEmail, subject, text, attachments })
+    : await sendViaResendToEfax({ toFaxEmail: toEmail, fromEmail, replyToEmail, subject, text, attachments });
+
+  return json(res, 200, {
+    status: 'ok',
+    success: true,
+    message: `Gmail sent to ${toEmail} with ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}.`,
+    to: toEmail,
+    fromEmail,
+    subject,
+    attachmentNames: attachments.map((item) => item.filename),
+    emailProvider: usingSmtp ? 'gmail_smtp' : 'resend',
+    emailProviderId: emailResult?.id || emailResult?.messageId || null,
+  });
+}
+
+async function safetyReportsSendGmail(req: any, res: any, user: any) {
+  try {
+    return await safetyReportsSendGmailInner(req, res, user);
+  } catch (error: any) {
+    return json(res, 500, {
+      status: 'error',
+      message: `Send Gmail failed: ${errorMessage(error)}`,
+      code: 'SEND_GMAIL_FAILED'
+    });
+  }
+}
+
 // PHASE12A78_EFAX_FMCSA_REPORT END
 
 // PHASE12A40_CLIENT_COMPLETED_SAFETY_PDF END
@@ -5975,7 +6074,7 @@ export default async function handler(req: any, res: any) {
         'tazworks-mvr-test', 'monitoring-on-off', 'monitoring-on-off/clear', 'monitoring-on-off/remove', 'monitoring-on-off/repair', 'monitoring-on-off/update'
       ]);
       const safetyRoutes = new Set([
-        'safety-reports', 'safety-reports/live-pull', 'safety-reports/fax-fmcsa', 'safety-reports/documents', 'safety-reports/documents/file', 'safety-reports/live-discover',
+        'safety-reports', 'safety-reports/live-pull', 'safety-reports/fax-fmcsa', 'safety-reports/documents', 'safety-reports/documents/file', 'safety-reports/send-gmail', 'safety-reports/live-discover',
         'safety-response-link', 'safety-response-diagnostics', 'import-safety-reports', 'email-templates',
         'safety-report-notes', 'client-safety-pdf'
       ]);
@@ -5990,6 +6089,7 @@ export default async function handler(req: any, res: any) {
     if (route === 'safety-reports/fax-fmcsa') return safetyReportsFaxFmcsa(req, res, user);
     if (route === 'safety-reports/documents') return safetyReportsDocuments(req, res, user);
     if (route === 'safety-reports/documents/file') return safetyReportsDocumentFile(req, res, user);
+    if (route === 'safety-reports/send-gmail') return safetyReportsSendGmail(req, res, user);
     if (route === 'safety-reports/live-discover') return safetyReportsLiveDiscover(req, res, user);
     if (route === 'safety-response-link') return safetyResponseLink(req, res, user);
     if (route === 'safety-response-diagnostics') return safetyResponseDiagnostics(req, res, user);
