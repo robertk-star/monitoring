@@ -1,6 +1,6 @@
 SAFFHIRE MONITORING - DRIVER PIPELINE LOGIN SYNC
 
-When a Driver Pipeline user logs in (driverpipeline.com host, @driverpipeline.com username, or company name Driver Pipeline), the server starts TazWorks sync in the background.
+After a successful client or staff login, the browser posts to /api/driverpipeline-login-sync.
+If the host is driverpipeline.com, the username is a Driver Pipeline account, or the company name is Driver Pipeline, that endpoint runs /api/index?path=auto-sync&force=1.
 
-Sync source in tazworks_sync_runs: driverpipeline-login-sync
-Applies to client-auth/login and auth/login.
+This is a background refresh so new TazWorks orders appear without a manual Settings sync.
