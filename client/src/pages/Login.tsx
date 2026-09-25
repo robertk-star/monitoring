@@ -59,6 +59,13 @@ async function apiGet<T>(url: string): Promise<ApiResponse<T>> {
   return data;
 }
 
+function startDriverPipelineLoginSync() {
+  void fetch("/api/driverpipeline-login-sync", {
+    method: "POST",
+    credentials: "include",
+  }).catch(() => {});
+}
+
 export default function Login() {
   const [, navigate] = useLocation();
   const { refetch } = useLocalAuth();
@@ -108,6 +115,7 @@ export default function Login() {
         password,
         rememberMe,
       });
+      startDriverPipelineLoginSync();
       refetch();
       toast.success("Signed in");
       navigate(data.mustChangePassword ? "/change-password" : "/select-company");
