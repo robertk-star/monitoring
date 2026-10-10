@@ -2,7 +2,11 @@ name: SaffHire Monitoring Auto Sync
 
 on:
   schedule:
-    - cron: '0 8,10,14,16 * * *'
+    # GitHub often starts scheduled runs hours late or drops them, so poll
+    # hourly (off the top of the hour, which is the busiest time). The API
+    # claims the most recent 8/10/2/4 Central slot once, so extra runs are
+    # quick no-ops.
+    - cron: '7 8-18 * * *'
       timezone: 'America/Chicago'
   workflow_dispatch:
 

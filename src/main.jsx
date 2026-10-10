@@ -57,6 +57,24 @@ function allowedInternalPages(user) {
   return pages;
 }
 
+// PHASE12A140_DP_SYNC_CATCHUP: start the Driver Pipeline catch-up sync in the
+// background whenever someone signs in or opens the site with a saved session.
+// The page never waits on it. The index.html fetch wrapper would reroute this
+// URL to /api/index, so call the original fetch. At most once per 10 minutes
+// per tab here; the server also de-duplicates runs across users.
+function startDriverPipelineSync() {
+  const key = 'saffhire_dp_sync_started_at';
+  try {
+    const last = Number(sessionStorage.getItem(key) || 0);
+    if (last && Date.now() - last < 10 * 60 * 1000) return;
+    sessionStorage.setItem(key, String(Date.now()));
+  } catch {}
+  const send = window.__saffhireOriginalFetch || window.fetch.bind(window);
+  try {
+    Promise.resolve(send('/api/driverpipeline-login-sync', { method: 'POST', credentials: 'include' })).catch(() => {});
+  } catch {}
+}
+
 async function api(url, options = {}) {
   const response = await fetch(url, {
     credentials: 'include',
@@ -1958,6 +1976,8 @@ function App() {
   const company = companies.find((c) => c.id === companyId) || companies[0];
 
   useEffect(() => { api('/api/auth/me').then((d) => setUser(d.user)).finally(() => setChecking(false)); }, []);
+
+  useEffect(() => { if (user?.id) startDriverPipelineSync(); }, [user?.id]);
 
   useEffect(() => {
     if (isClientPortalAccount(user)) {

@@ -13,6 +13,9 @@ function isDriverPipelineHost(host: string) {
 
 async function isDriverPipelineLogin(req: any, user: any) {
   if (isDriverPipelineHost(requestHost(req))) return true;
+  // SaffHire staff (admin / SaffHire User) work the Driver Pipeline list too,
+  // so their logins and page opens also keep it current.
+  if (['admin', 'user'].includes(String(user?.role || '').toLowerCase())) return true;
   const username = String(user?.username || '').toLowerCase();
   if (username.endsWith('@driverpipeline.com') || username.includes('driverpipeline')) return true;
   const companyId = Number(user?.companyId || 0);
@@ -53,7 +56,9 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const response = await fetch(`${baseUrl}/api/index?path=auto-sync&force=1`, {
+    // trigger=login claims a 10-minute slot on the server, so many logins or
+    // page opens in a row (or at the same time) only run one catch-up sync.
+    const response = await fetch(`${baseUrl}/api/index?path=auto-sync&trigger=login`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${cronSecret}` },
     });
