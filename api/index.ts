@@ -3149,10 +3149,22 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
   // orders and then pull deep MVR result payloads for every order. Keep each
   // click-sized sync small, return a progress marker, and let the browser run
   // another batch instead of one long serverless invocation.
+  //
+  // PHASE12A140_DP_SYNC_CATCHUP: every order on a fetched page is put on the
+  // Monitoring list first (cheap database writes, no MVR call). The slow MVR
+  // medical-expiration check only runs afterwards with whatever time is left,
+  // and only for orders that were just added (plus existing ones when
+  // refreshExistingMvr is on, e.g. the manual Data Sync button). The returned
+  // nextStartPage points at the first page that still has unprocessed orders,
+  // so the next batch never skips orders when a batch stops early.
   const maxPages = boundedNumber(body.maxPages, source === 'monitoring-page-data-sync' ? 2 : 3, 1, 4);
   const pageSize = boundedNumber(body.pageSize, source === 'monitoring-page-data-sync' ? 10 : 10, 1, 15);
-  const maxOrdersToProcess = boundedNumber(body.maxOrders, maxPages * pageSize, 1, 25);
+  const maxOrdersToProcess = boundedNumber(body.maxOrders, maxPages * pageSize, 1, 60);
   const maxMvrChecks = boundedNumber(body.maxMvrChecks, source === 'monitoring-page-data-sync' ? 4 : 6, 0, 8);
+  const lookbackDays = boundedNumber(body.lookbackDays, 0, 0, 120);
+  const lookbackCutoffMs = lookbackDays > 0 ? Date.now() - lookbackDays * 24 * 60 * 60 * 1000 : 0;
+  const stopAfterKnownPages = boundedNumber(body.stopAfterKnownPages, 0, 0, 10);
+  const refreshExistingMvr = body.refreshExistingMvr === undefined ? source === 'monitoring-page-data-sync' : asBool(body.refreshExistingMvr);
   const syncBudgetMs = tazworksSyncBudgetMs(body);
   const syncStartedMs = Date.now();
   const deadlineMs = syncStartedMs + syncBudgetMs;
@@ -3162,11 +3174,17 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
   const runInsert = await query('insert into tazworks_sync_runs (status, triggered_by, message) values ($1,$2,$3) returning id', ['running', triggeredBy, 'Manual sync started']);
   const runId = runInsert.rows[0].id;
 
-  let ordersPulled = 0, applicantsUpserted = 0, safetyReportsUpdated = 0, medExpireUpdated = 0, medExpireCleared = 0, mvrSearchesChecked = 0, errorsCount = 0, mvrChecksAttempted = 0, pagesProcessed = 0;
+  let ordersPulled = 0, applicantsUpserted = 0, applicantsInserted = 0, safetyReportsUpdated = 0, medExpireUpdated = 0, medExpireCleared = 0, mvrSearchesChecked = 0, errorsCount = 0, mvrChecksAttempted = 0, pagesProcessed = 0, ordersProcessed = 0;
   let stoppedEarly = false;
   let reachedEnd = false;
-  const errors: string[] = [], pageSummaries: any[] = [], mvrSamples: any[] = [];
+  let reachedLookback = false;
+  let reachedKnownPages = false;
+  let knownPagesInARow = 0;
+  const errors: string[] = [], pageSummaries: any[] = [], mvrSamples: any[] = [], newFileNumbers: string[] = [];
   const dedupe = new Map<string, any>();
+  const existingByFile = new Map<string, any>();
+  const mvrCandidates: any[] = [];
+  let nextStartPage = startPage;
 
   try {
     const e = tazEnv();
@@ -3177,37 +3195,48 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
       const payload = await proxyGet(`/tazworks/orders?page=${page}&size=${pageSize}&clientGuid=${encodeURIComponent(e.clientGuid)}`);
       const list = arr(payload);
       pagesProcessed++;
-      pageSummaries.push({ page, arrayCount: list.length, topLevelKeys: payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 20) : [] });
 
+      const pageOrders: any[] = [];
       for (const row of list) {
-        const o = orderFrom(row);
-        const key = String(o.orderGuid || o.fileNumber || JSON.stringify(row).slice(0, 100));
-        if (!dedupe.has(key)) dedupe.set(key, o);
+        const o: any = orderFrom(row);
+        if (!o.orderGuid && !o.fileNumber) continue;
+        const key = String(o.orderGuid || o.fileNumber);
+        if (dedupe.has(key)) continue;
+        o.page = page;
+        dedupe.set(key, o);
+        pageOrders.push(o);
       }
 
+      const pageFiles = pageOrders.map((o: any) => String(o.fileNumber || '')).filter(Boolean);
+      if (pageFiles.length) {
+        const existing = await query(
+          'select "fileNumber", "applicantName", "orderDate", "mvrStatus", "medExpire", "medExpireOverridden" from applicants where "companyId"=$1 and "fileNumber" = any($2::text[])',
+          [companyId, pageFiles]
+        );
+        for (const row of existing.rows) existingByFile.set(String(row.fileNumber), row);
+      }
+      const knownOnPage = pageFiles.filter((file) => existingByFile.has(file)).length;
+      const olderThanLookback = lookbackCutoffMs > 0 && pageOrders.length > 0 && pageOrders.every((o: any) => {
+        const t = new Date(o.orderedDate || o.createdDate || 0).getTime();
+        return Number.isFinite(t) && t > 0 && t < lookbackCutoffMs;
+      });
+      pageSummaries.push({ page, arrayCount: list.length, orders: pageOrders.length, alreadyListed: knownOnPage, olderThanLookback, topLevelKeys: payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 20) : [] });
+
       if (list.length < pageSize) { reachedEnd = true; break; }
+      if (olderThanLookback) { reachedLookback = true; break; }
+      knownPagesInARow = pageFiles.length > 0 && knownOnPage === pageFiles.length ? knownPagesInARow + 1 : 0;
+      if (stopAfterKnownPages > 0 && knownPagesInARow >= stopAfterKnownPages) { reachedKnownPages = true; break; }
     }
 
-    const orders = Array.from(dedupe.values()).filter((o: any) => o.orderGuid || o.fileNumber).slice(0, maxOrdersToProcess);
-    ordersPulled = orders.length;
+    const fetchedOrders = Array.from(dedupe.values());
+    const orders = fetchedOrders.slice(0, maxOrdersToProcess);
+    ordersPulled = fetchedOrders.length;
+    let firstUnprocessedPage: number | null = fetchedOrders.length > orders.length ? Number(fetchedOrders[orders.length].page) : null;
 
-    for (const o of orders) {
-      if (shouldStopSoon()) { stoppedEarly = true; break; }
+    for (let index = 0; index < orders.length; index++) {
+      const o = orders[index];
+      if (shouldStopSoon()) { stoppedEarly = true; firstUnprocessedPage = Number(o.page); break; }
       try {
-        let medExpire: string | null = null;
-
-        if (o.orderGuid && mvrChecksAttempted < maxMvrChecks && !shouldStopSoon()) {
-          try {
-            mvrChecksAttempted++;
-            const mvr = await pullMvrMed(o.orderGuid, o, { quick: true, deadlineMs: deadlineMs - 900, fetchTimeoutMs: 2500 });
-            mvrSamples.push(mvr);
-            mvrSearchesChecked += Number(mvr.mvrSearches || 0);
-            if (mvr.medExpire) medExpire = mvr.medExpire;
-          } catch (err: any) {
-            errors.push(`MVR check failed for ${o.fileNumber || o.orderGuid}: ${String(err?.message || err)}`);
-          }
-        }
-
         await query(
           `insert into tazworks_order_cache (company_id, order_guid, file_number, applicant_name, order_status, order_type, ordered_date, completed_date, client_name, client_code, product_name, requested_by, search_flagged, source_modified_date, raw_order, last_seen_at, last_sync_run_id)
            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),$16)
@@ -3216,57 +3245,110 @@ async function tazworksSyncRun(req: any, res: any, user: any) {
         );
 
         if (o.fileNumber) {
-          const existingApplicant = await query(
-            'select "medExpire", "medExpireOverridden" from applicants where "companyId"=$1 and "fileNumber"=$2 limit 1',
-            [companyId, String(o.fileNumber)]
-          );
-          const existingMedExpire = existingApplicant.rows[0]?.medExpire || null;
-          const existingOverridden = Boolean(existingApplicant.rows[0]?.medExpireOverridden);
+          const fileNumber = String(o.fileNumber);
+          const existing = existingByFile.get(fileNumber);
+          const applicantName = String(o.applicantName || '');
+          const orderDate = dateOnly(o.orderedDate || o.createdDate);
+          const mvrStatus = String(o.orderStatus || '');
 
-          await query(
-            `insert into applicants ("companyId","fileNumber","applicantName","orderDate","monitorStatus","mvrStatus","medExpire","medExpireOverridden",notes)
-             values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-             on conflict ("fileNumber","companyId") do update set
-               "applicantName"=case when excluded."applicantName"<>'' then excluded."applicantName" else applicants."applicantName" end,
-               "orderDate"=coalesce(excluded."orderDate",applicants."orderDate"),
-               "mvrStatus"=coalesce(excluded."mvrStatus",applicants."mvrStatus"),
-               "medExpire"=case
-                 when applicants."medExpireOverridden"=true then applicants."medExpire"
-                 when excluded."medExpire" is not null then excluded."medExpire"
-                 else null
-               end,
-               "updatedAt"=now()`,
-            [companyId, String(o.fileNumber), String(o.applicantName || 'REVIEW NAME NEEDED'), dateOnly(o.orderedDate || o.createdDate), 'Off', String(o.orderStatus || ''), medExpire, false, '']
-          );
+          if (!existing) {
+            // New order: put it on the Monitoring list right away (default Off,
+            // same fields as before). Medical expiration is filled in below.
+            await query(
+              `insert into applicants ("companyId","fileNumber","applicantName","orderDate","monitorStatus","mvrStatus","medExpire","medExpireOverridden",notes)
+               values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+               on conflict ("fileNumber","companyId") do update set
+                 "applicantName"=case when excluded."applicantName"<>'' then excluded."applicantName" else applicants."applicantName" end,
+                 "orderDate"=coalesce(excluded."orderDate",applicants."orderDate"),
+                 "mvrStatus"=coalesce(excluded."mvrStatus",applicants."mvrStatus"),
+                 "updatedAt"=now()`,
+              [companyId, fileNumber, applicantName || 'REVIEW NAME NEEDED', orderDate, 'Off', mvrStatus, null, false, '']
+            );
+            applicantsUpserted++;
+            applicantsInserted++;
+            newFileNumbers.push(fileNumber);
+            existingByFile.set(fileNumber, { fileNumber, applicantName, orderDate, mvrStatus, medExpire: null, medExpireOverridden: false });
+            if (o.orderGuid) mvrCandidates.push({ o, existing: null });
+          } else {
+            // Already on the list: only touch the row when TazWorks data changed.
+            const changed = (applicantName && applicantName !== String(existing.applicantName || ''))
+              || (orderDate && orderDate !== String(existing.orderDate || ''))
+              || mvrStatus !== String(existing.mvrStatus || '');
+            if (changed) {
+              await query(
+                `update applicants set
+                   "applicantName"=case when $1<>'' then $1 else "applicantName" end,
+                   "orderDate"=coalesce($2,"orderDate"),
+                   "mvrStatus"=$3,
+                   "updatedAt"=now()
+                 where "companyId"=$4 and "fileNumber"=$5`,
+                [applicantName, orderDate, mvrStatus, companyId, fileNumber]
+              );
+              applicantsUpserted++;
+            }
+            if (refreshExistingMvr && o.orderGuid) mvrCandidates.push({ o, existing });
+          }
 
-          applicantsUpserted++;
-          if (medExpire) medExpireUpdated++;
-          else if (existingMedExpire && !existingOverridden) medExpireCleared++;
-          const safetyUpdate = await query(
-            `update safety_reports set "applicantName"=case when $1<>'' then $1 else "applicantName" end,"updatedAt"=now() where "companyId"=$2 and "fileNumber"=$3 returning id`,
-            [String(o.applicantName || ''), companyId, String(o.fileNumber)]
-          );
-          safetyReportsUpdated += safetyUpdate.rowCount || 0;
+          if (!existing || (applicantName && applicantName !== String(existing.applicantName || ''))) {
+            const safetyUpdate = await query(
+              `update safety_reports set "applicantName"=case when $1<>'' then $1 else "applicantName" end,"updatedAt"=now() where "companyId"=$2 and "fileNumber"=$3 returning id`,
+              [applicantName, companyId, fileNumber]
+            );
+            safetyReportsUpdated += safetyUpdate.rowCount || 0;
+          }
         }
+        ordersProcessed++;
       } catch (err: any) {
         errorsCount++;
         errors.push(String(err?.message || err));
+        ordersProcessed++;
       }
     }
 
-    const nextStartPage = startPage + pagesProcessed;
-    const message = stoppedEarly
-      ? `Sync batch completed before the Vercel timeout. Pulled ${ordersPulled} order(s). Run Data Sync again to continue from page ${nextStartPage}.`
-      : `Sync completed. Pulled ${ordersPulled} orders. Updated ${medExpireUpdated} medical expiration date(s). Cleared ${medExpireCleared} stale medical date(s).`;
+    // Slow MVR medical-expiration lookups run last, newest additions first,
+    // so a slow TazWorks response can never keep an order off the list.
+    for (const candidate of mvrCandidates) {
+      // Leave room for one quick MVR lookup (about 2.5s) before the batch deadline.
+      if (mvrChecksAttempted >= maxMvrChecks || Date.now() > deadlineMs - 3000) break;
+      const { o, existing } = candidate;
+      try {
+        mvrChecksAttempted++;
+        const mvr = await pullMvrMed(o.orderGuid, o, { quick: true, deadlineMs: deadlineMs - 900, fetchTimeoutMs: 2500 });
+        mvrSamples.push(mvr);
+        mvrSearchesChecked += Number(mvr.mvrSearches || 0);
+        if (mvr.medExpire) {
+          const updated = await query(
+            `update applicants set "medExpire"=$1,"updatedAt"=now() where "companyId"=$2 and "fileNumber"=$3 and coalesce("medExpireOverridden",false)=false and coalesce("medExpire",'')<>$1`,
+            [mvr.medExpire, companyId, String(o.fileNumber)]
+          );
+          medExpireUpdated += updated.rowCount || 0;
+        } else if (existing && existing.medExpire && !existing.medExpireOverridden && !mvr.skipped && !(mvr.resultErrors || []).length) {
+          const cleared = await query(
+            `update applicants set "medExpire"=null,"updatedAt"=now() where "companyId"=$1 and "fileNumber"=$2 and coalesce("medExpireOverridden",false)=false`,
+            [companyId, String(o.fileNumber)]
+          );
+          medExpireCleared += cleared.rowCount || 0;
+        }
+      } catch (err: any) {
+        errors.push(`MVR check failed for ${o.fileNumber || o.orderGuid}: ${String(err?.message || err)}`);
+      }
+    }
+
+    const allFetchedProcessed = firstUnprocessedPage === null;
+    nextStartPage = allFetchedProcessed ? startPage + pagesProcessed : Number(firstUnprocessedPage);
+    const hasMore = !allFetchedProcessed || (!reachedEnd && !reachedLookback && !reachedKnownPages && pagesProcessed > 0);
+    const message = !allFetchedProcessed
+      ? `Sync batch stopped before the Vercel timeout. Added ${applicantsInserted} new order(s). Run Data Sync again to continue from page ${nextStartPage}.`
+      : `Sync completed. Pulled ${ordersPulled} orders. Added ${applicantsInserted} new order(s). Updated ${medExpireUpdated} medical expiration date(s). Cleared ${medExpireCleared} stale medical date(s).`;
     await query(
       'update tazworks_sync_runs set status=$1, completed_at=now(), orders_pulled=$2, applicants_upserted=$3, safety_reports_updated=$4, errors_count=$5, message=$6, raw_summary=$7 where id=$8',
-      [errorsCount ? 'completed_with_errors' : 'completed', ordersPulled, applicantsUpserted, safetyReportsUpdated, errorsCount, message, JSON.stringify({ pages: pageSummaries, startPage, nextStartPage, maxPages, pageSize, syncBudgetMs, stoppedEarly, reachedEnd, maxOrdersToProcess, maxMvrChecks, mvrChecksAttempted, mvrSearchesChecked, medExpireUpdated, medExpireCleared, mvrSamples: mvrSamples.slice(0, 20), errors: errors.slice(0, 10) }), runId]
+      [errorsCount ? 'completed_with_errors' : 'completed', ordersPulled, applicantsUpserted, safetyReportsUpdated, errorsCount, message, JSON.stringify({ pages: pageSummaries, startPage, nextStartPage, hasMore, maxPages, pageSize, syncBudgetMs, stoppedEarly, reachedEnd, reachedLookback, reachedKnownPages, lookbackDays, ordersProcessed, applicantsInserted, newFileNumbers, maxOrdersToProcess, maxMvrChecks, mvrChecksAttempted, mvrSearchesChecked, medExpireUpdated, medExpireCleared, mvrSamples: mvrSamples.slice(0, 20), errors: errors.slice(0, 10) }), runId]
     );
 
-    return json(res, 200, { status: 'ok', runId, ordersPulled, applicantsUpserted, safetyReportsUpdated, medExpireUpdated, medExpireCleared, mvrSearchesChecked, mvrChecksAttempted, errorsCount, message, pages: pageSummaries, startPage, nextStartPage, hasMore: !reachedEnd && (stoppedEarly || pagesProcessed >= maxPages), maxPages, pageSize });
+    return json(res, 200, { status: 'ok', runId, ordersPulled, ordersProcessed, applicantsUpserted, applicantsInserted, newFileNumbers, safetyReportsUpdated, medExpireUpdated, medExpireCleared, mvrSearchesChecked, mvrChecksAttempted, errorsCount, message, pages: pageSummaries, startPage, nextStartPage, hasMore, stoppedEarly, reachedEnd, reachedLookback, reachedKnownPages, maxPages, pageSize });
   } catch (error: any) {
     const safe = error?.message || 'The order connection is currently unavailable.';
-    await query('update tazworks_sync_runs set status=$1, completed_at=now(), errors_count=$2, message=$3, raw_summary=$4 where id=$5', ['failed', errorsCount + 1, safe, JSON.stringify({ pages: pageSummaries, startPage, maxPages, pageSize, syncBudgetMs, stoppedEarly, reachedEnd, mvrSearchesChecked, medExpireUpdated, medExpireCleared, mvrSamples: mvrSamples.slice(0, 20), errors: [safe, ...errors].slice(0, 10) }), runId]);
+    await query('update tazworks_sync_runs set status=$1, completed_at=now(), errors_count=$2, message=$3, raw_summary=$4 where id=$5', ['failed', errorsCount + 1, safe, JSON.stringify({ pages: pageSummaries, startPage, nextStartPage: startPage, hasMore: true, maxPages, pageSize, syncBudgetMs, stoppedEarly, reachedEnd, mvrSearchesChecked, medExpireUpdated, medExpireCleared, mvrSamples: mvrSamples.slice(0, 20), errors: [safe, ...errors].slice(0, 10) }), runId]);
     return json(res, error?.statusCode || 503, { status: 'error', message: safe, runId });
   }
 }
@@ -5850,9 +5932,9 @@ function centralDateParts(date = new Date()) {
   };
 }
 
-function automaticSyncSlot(force = false) {
+function automaticSyncSlot(force = false, trigger = '') {
   const now = new Date();
-  const local = centralDateParts(now);
+  let local = centralDateParts(now);
   if (force) {
     return {
       key: `manual-${now.toISOString()}`,
@@ -5861,14 +5943,31 @@ function automaticSyncSlot(force = false) {
     };
   }
 
+  // PHASE12A140_DP_SYNC_CATCHUP: a Driver Pipeline login or page open claims a
+  // 10-minute slot. The auto_sync_runs slot claim below turns repeat logins in
+  // the same window (and concurrent ones) into a quick no-op.
+  if (trigger === 'login') {
+    const bucket = new Date(Math.floor(now.getTime() / 600000) * 600000).toISOString().slice(0, 16);
+    return {
+      key: `login-${bucket}`,
+      label: `Login catch-up ${bucket} UTC`,
+      forced: false
+    };
+  }
+
+  // GitHub scheduled runs regularly start 1-5 hours late (or not at all), so a
+  // strict 2-hour window skipped most of them. Claim the most recent slot that
+  // has already passed instead; before 8 AM that is yesterday's 4 PM slot.
   const scheduledHours = [8, 10, 14, 16];
-  const currentMinutes = local.hour * 60 + local.minute;
-  const eligible = scheduledHours
-    .map((hour) => ({ hour, ageMinutes: currentMinutes - hour * 60 }))
-    .filter((slot) => slot.ageMinutes >= 0 && slot.ageMinutes <= 120)
-    .sort((a, b) => a.ageMinutes - b.ageMinutes);
-  const selected = eligible[0];
-  if (!selected) return null;
+  let currentMinutes = local.hour * 60 + local.minute;
+  let passed = scheduledHours.filter((hour) => currentMinutes >= hour * 60);
+  if (!passed.length) {
+    local = centralDateParts(new Date(now.getTime() - 12 * 60 * 60 * 1000));
+    currentMinutes = 24 * 60;
+    passed = scheduledHours;
+  }
+  const selected = { hour: passed[passed.length - 1] };
+  if (!selected.hour) return null;
   const dateKey = `${String(local.year).padStart(4, '0')}-${String(local.month).padStart(2, '0')}-${String(local.day).padStart(2, '0')}`;
   const hourLabel = String(selected.hour).padStart(2, '0');
   return {
@@ -5913,7 +6012,8 @@ async function automaticMonitoringAndSafetySync(req: any, res: any) {
 
   const url = new URL(req.url || '/', 'https://local.test');
   const force = ['1', 'true', 'yes'].includes(String(url.searchParams.get('force') || '').toLowerCase());
-  const slot = automaticSyncSlot(force);
+  const trigger = String(url.searchParams.get('trigger') || '').trim().toLowerCase();
+  const slot = automaticSyncSlot(force, trigger);
   if (!slot) {
     return json(res, 200, {
       status: 'skipped',
@@ -5964,25 +6064,62 @@ async function automaticMonitoringAndSafetySync(req: any, res: any) {
       isActive: true
     };
 
+    // PHASE12A140_DP_SYNC_CATCHUP: two passes, both within one time budget.
+    // 1) Newest orders: page forward from the top until two pages in a row
+    //    are already on the Monitoring list (or the lookback window ends).
+    // 2) Deep catch-up: resume a sweep through the whole lookback window from
+    //    where the previous run's sweep stopped, so an order that was ever
+    //    skipped is picked up on a later run instead of being lost.
     const monitoringBatches: any[] = [];
-    let monitoringStartPage = 0;
-    for (let batch = 0; batch < 2; batch++) {
+    const monitoringBudgetMs = boundedNumber(process.env.AUTO_SYNC_MONITORING_BUDGET_MS, 20000, 8000, 40000);
+    const lookbackDays = boundedNumber(process.env.AUTO_SYNC_LOOKBACK_DAYS, 30, 1, 120);
+    const monitoringStartedMs = Date.now();
+    const monitoringRemainingMs = () => monitoringBudgetMs - (Date.now() - monitoringStartedMs);
+    const runMonitoringBatch = async (label: string, startPage: number, extra: any) => {
       const result = await invokeInternalJsonHandler(tazworksSyncRun, {
         companyId,
-        source: `scheduled-auto-sync-${slot.key}-batch-${batch + 1}`,
-        startPage: monitoringStartPage,
+        source: `scheduled-auto-sync-${slot.key}-${label}`,
+        startPage,
         maxPages: 4,
         pageSize: 15,
-        maxOrders: 25,
+        maxOrders: 60,
         maxMvrChecks: 8,
-        maxRunMs: 8500
+        maxRunMs: Math.min(8500, Math.max(3000, monitoringRemainingMs() - 500)),
+        lookbackDays,
+        refreshExistingMvr: false,
+        ...extra
       }, adminUser);
       monitoringBatches.push(result);
-      if (result.statusCode < 200 || result.statusCode >= 300 || result.payload?.status === 'error' || !result.payload?.hasMore) break;
+      return result;
+    };
+    const batchFailed = (result: any) => result.statusCode < 200 || result.statusCode >= 300 || result.payload?.status === 'error';
+
+    let recentPage = 0;
+    for (let batch = 0; batch < 6 && monitoringRemainingMs() > 4000; batch++) {
+      const result = await runMonitoringBatch(`recent-batch-${batch + 1}`, recentPage, { stopAfterKnownPages: 2 });
+      if (batchFailed(result) || !result.payload?.hasMore) break;
       const nextPage = Number(result.payload?.nextStartPage || 0);
-      if (!Number.isFinite(nextPage) || nextPage <= monitoringStartPage) break;
-      monitoringStartPage = nextPage;
+      if (!Number.isFinite(nextPage) || nextPage <= recentPage) break;
+      recentPage = nextPage;
     }
+
+    let catchupPage = 0;
+    try {
+      const lastCatchup = await query(
+        `select raw_summary from tazworks_sync_runs where triggered_by like 'scheduled-auto-sync-%-catchup-batch-%' and status <> 'running' order by started_at desc limit 1`
+      );
+      const summary = lastCatchup.rows[0]?.raw_summary || {};
+      const savedPage = Number(summary.nextStartPage);
+      if (summary.hasMore && Number.isFinite(savedPage) && savedPage > 0) catchupPage = savedPage;
+    } catch {}
+    for (let batch = 0; batch < 6 && monitoringRemainingMs() > 4000; batch++) {
+      const result = await runMonitoringBatch(`catchup-batch-${batch + 1}`, catchupPage, { stopAfterKnownPages: 0 });
+      if (batchFailed(result) || !result.payload?.hasMore) break;
+      const nextPage = Number(result.payload?.nextStartPage || 0);
+      if (!Number.isFinite(nextPage) || nextPage <= catchupPage) break;
+      catchupPage = nextPage;
+    }
+
     const monitoring = {
       statusCode: monitoringBatches.every((item) => item.statusCode >= 200 && item.statusCode < 300 && item.payload?.status !== 'error') ? 200 : 500,
       payload: {
@@ -5990,6 +6127,8 @@ async function automaticMonitoringAndSafetySync(req: any, res: any) {
         batches: monitoringBatches.map((item) => item.payload),
         ordersPulled: monitoringBatches.reduce((sum, item) => sum + Number(item.payload?.ordersPulled || 0), 0),
         applicantsUpserted: monitoringBatches.reduce((sum, item) => sum + Number(item.payload?.applicantsUpserted || 0), 0),
+        applicantsInserted: monitoringBatches.reduce((sum, item) => sum + Number(item.payload?.applicantsInserted || 0), 0),
+        newFileNumbers: monitoringBatches.flatMap((item) => Array.isArray(item.payload?.newFileNumbers) ? item.payload.newFileNumbers : []),
         medExpireUpdated: monitoringBatches.reduce((sum, item) => sum + Number(item.payload?.medExpireUpdated || 0), 0),
         errorsCount: monitoringBatches.reduce((sum, item) => sum + Number(item.payload?.errorsCount || 0), 0),
         message: monitoringBatches.map((item) => item.payload?.message).filter(Boolean).join(' | ')

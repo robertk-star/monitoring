@@ -229,10 +229,23 @@
     });
   }
 
+  // Background Driver Pipeline catch-up sync when the portal opens (at most
+  // once per 10 minutes per tab; the server de-duplicates across users).
+  function startDriverPipelineSync() {
+    const key = 'saffhire_dp_sync_started_at';
+    try {
+      const last = Number(sessionStorage.getItem(key) || 0);
+      if (last && Date.now() - last < 10 * 60 * 1000) return;
+      sessionStorage.setItem(key, String(Date.now()));
+    } catch {}
+    try { fetch('/api/driverpipeline-login-sync', { method: 'POST', credentials: 'include' }).catch(() => {}); } catch {}
+  }
+
   async function boot() {
     try {
       const me = await api('client-auth/me');
       state.user = me.user || null;
+      startDriverPipelineSync();
       if (state.user?.mustChangePassword) {
         renderRequiredPasswordChange();
         return;

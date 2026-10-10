@@ -2,12 +2,19 @@
   "functions": {
     "api/index.ts": {
       "maxDuration": 60
+    },
+    "api/driverpipeline-login-sync.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
     {
       "path": "/api/index?path=keepalive",
       "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/index?path=auto-sync",
+      "schedule": "30 22 * * *"
     }
   ],
   "rewrites": [
